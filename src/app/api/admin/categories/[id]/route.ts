@@ -26,7 +26,7 @@ export async function PATCH(
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
     return NextResponse.json({ category: data });
-  } catch (err) {
+  } catch {
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }
@@ -46,7 +46,7 @@ export async function DELETE(
     }
 
     return NextResponse.json({ ok: true });
-  } catch (err) {
+  } catch {
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }

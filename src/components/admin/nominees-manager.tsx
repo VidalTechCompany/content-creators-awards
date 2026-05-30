@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useMemo } from "react";
 import { toast } from "sonner";
 import Image from "next/image"; // Import the Image component
 import { adminFetch } from "@/lib/admin/fetch";
@@ -18,6 +18,14 @@ type NomineeWithMeta = NomineeRow & {
   categories: { title: string; slug: string } | null;
   subcategories?: { name: string } | null;
   nominee_stats: { vote_count: number } | { vote_count: number }[] | null;
+};
+
+const generateSlug = (text: string) => {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "");
 };
 
 export function NomineesManager({
@@ -92,13 +100,16 @@ export function NomineesManager({
     }
   }, [filter]);
 
-  const hasServerData = initialNominees.length > 0 || initialCategories.length > 0;
+  // Track if we are performing the first load to prevent double-fetching
+  const [hasLoadedInitial, setHasLoadedInitial] = useState(false);
 
   useEffect(() => {
-    if (!hasServerData) {
+    // Reload if the filter changes, or if we don't have initial data
+    if (hasLoadedInitial || (initialNominees.length === 0 && initialCategories.length === 0)) {
       void load();
     }
-  }, [hasServerData, load]);
+    setHasLoadedInitial(true);
+  }, [filter, load, hasLoadedInitial, initialNominees.length, initialCategories.length]);
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
@@ -117,6 +128,7 @@ export function NomineesManager({
           name: form.name,
           known_name: form.known_name || null,
           status: form.status,
+          slug: generateSlug(form.name),
         }),
       });
 
@@ -218,7 +230,7 @@ export function NomineesManager({
         method: "POST",
         body: JSON.stringify({
           title: newCatTitle.trim(),
-          slug: newCatTitle.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""),
+          slug: generateSlug(newCatTitle),
           section: "General",
         }),
       });
@@ -241,7 +253,7 @@ export function NomineesManager({
         method: "PATCH",
         body: JSON.stringify({
           title: editingCatTitle.trim(),
-          slug: editingCatTitle.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""),
+          slug: generateSlug(editingCatTitle),
           section: cat?.section || "General",
         }),
       });
@@ -318,10 +330,10 @@ export function NomineesManager({
   function voteCount(n: NomineeWithMeta) {
     const s = n.nominee_stats;
     if (Array.isArray(s)) return s[0]?.vote_count ?? 0;
-    return (s as any)?.vote_count ?? 0;
+    return (s as { vote_count: number } | null)?.vote_count ?? 0;
   }
 
-  const getWinners = () => {
+  const results = useMemo(() => {
     const approved = nominees.filter((n) => n.status === "approved");
 
     return categories.map((cat) => {
@@ -348,10 +360,9 @@ export function NomineesManager({
 
       return { category: cat, subWinners, overallWinners };
     });
-  };
+  }, [nominees, categories]);
 
   if (view === "analysis") {
-    const results = getWinners();
     return (
       <div className="space-y-6">
         <div className="flex justify-between items-center">

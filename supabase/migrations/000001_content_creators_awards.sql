@@ -71,11 +71,11 @@ create table public.nominee_stats (
 
 create table public.votes (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users (id) on delete cascade,
+  user_id uuid references auth.users (id) on delete cascade,
   category_id uuid not null references public.categories (id) on delete cascade,
   nominee_id uuid not null references public.nominees (id) on delete cascade,
   ip_address inet,
-  user_agent text,
+  user_agent text, 
   fingerprint text,
   created_at timestamptz not null default now(),
   -- One account = one vote per category
@@ -265,7 +265,21 @@ create policy "admins_all_if_admin" on public.categories
     exists (select 1 from public.admins a where a.user_id = auth.uid() and a.role = 'super_admin')
   );
 
+create policy "admins_subcategories_all" on public.subcategories
+  for all to authenticated using (
+    exists (select 1 from public.admins a where a.user_id = auth.uid())
+  ) with check (
+    exists (select 1 from public.admins a where a.user_id = auth.uid())
+  );
+
 create policy "admins_nominees_all" on public.nominees
+  for all to authenticated using (
+    exists (select 1 from public.admins a where a.user_id = auth.uid())
+  ) with check (
+    exists (select 1 from public.admins a where a.user_id = auth.uid())
+  );
+
+create policy "admins_nominee_stats_write" on public.nominee_stats
   for all to authenticated using (
     exists (select 1 from public.admins a where a.user_id = auth.uid())
   ) with check (
@@ -292,8 +306,8 @@ create policy "admins_audit_read" on public.audit_logs
   );
 
 create policy "admins_audit_insert" on public.audit_logs
-  for insert to authenticated with check (
-    exists (select 1 from public.admins a where a.user_id = auth.uid() and a.role = 'super_admin')
+  for insert to authenticated with check ( -- Allow moderators to log actions too
+    exists (select 1 from public.admins a where a.user_id = auth.uid())
   );
 
 create policy "admins_suspicious_read" on public.suspicious_activity

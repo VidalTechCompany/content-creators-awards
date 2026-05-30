@@ -56,7 +56,7 @@ export default async function CategoryDetailPage({ params }: Props) {
           const officialName = String(n.name);
           const knownName = n.known_name ? String(n.known_name) : officialName;
           const rawSub = n.subcategories;
-          const subcategoryName = Array.isArray(rawSub) ? rawSub[0]?.name : (rawSub as any)?.name;
+          const subcategoryName = Array.isArray(rawSub) ? rawSub[0]?.name : (rawSub as Record<string, unknown>)?.name;
           const bio = n.bio ? String(n.bio) : "";
           const imageUrl = n.image_url ? String(n.image_url) : null;
           const socials = (n.social_links as Record<string, string>) ?? {};

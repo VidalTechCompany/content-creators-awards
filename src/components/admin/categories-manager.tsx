@@ -16,6 +16,14 @@ type CategoryWithSubs = CategoryRow & {
   subcategories?: { id: string; name: string }[];
 };
 
+const generateSlug = (text: string) => {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "");
+};
+
 export function CategoriesManager({ role }: { role: AdminRole }) {
   const isSuper = role === "super_admin";
   const canEdit = role === "super_admin" || role === "moderator";
@@ -51,6 +59,7 @@ export function CategoriesManager({ role }: { role: AdminRole }) {
         body: JSON.stringify({
           title: form.title,
           section: form.section,
+          slug: generateSlug(form.title),
           description: form.description || null,
           sort_order: Number(form.sort_order) || 0,
         }),

@@ -3,6 +3,7 @@
 import { useState, useRef } from "react";
 import { Upload, Loader2 } from "lucide-react";
 import Image from "next/image";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 interface ImageUploadProps {
@@ -22,7 +23,7 @@ export function ImageUpload({ nomineeId, currentImageUrl, onUploadComplete }: Im
 
         // Strict validation as requested: JPEG and PNG only
         if (!["image/jpeg", "image/png"].includes(file.type)) {
-            alert("Please upload a JPEG or PNG image.");
+            toast.error("Please upload a JPEG or PNG image.");
             return;
         }
 
@@ -44,7 +45,7 @@ export function ImageUpload({ nomineeId, currentImageUrl, onUploadComplete }: Im
             onUploadComplete?.(data.url);
         } catch (err) {
             console.error("Upload error:", err);
-            alert(err instanceof Error ? err.message : "Upload failed");
+            toast.error(err instanceof Error ? err.message : "Upload failed");
         } finally {
             setUploading(false);
         }

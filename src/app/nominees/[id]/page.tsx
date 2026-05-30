@@ -68,11 +68,11 @@ export default async function NomineeProfilePage({ params }: Props) {
   if (!nominee) notFound();
 
   const rawCat = nominee.categories;
-  const category = (Array.isArray(rawCat) ? rawCat[0] : rawCat) as any;
+  const category = (Array.isArray(rawCat) ? rawCat[0] : rawCat) as { slug: string; title: string; id: string };
   const rawSub = nominee.subcategories;
-  const subcategory = (Array.isArray(rawSub) ? rawSub[0] : rawSub) as any;
+  const subcategory = (Array.isArray(rawSub) ? rawSub[0] : rawSub) as { name: string } | null;
   const rawStats = nominee.nominee_stats;
-  const initialVotes = Array.isArray(rawStats) ? rawStats[0]?.vote_count ?? 0 : (rawStats as any)?.vote_count ?? 0;
+  const initialVotes = Array.isArray(rawStats) ? rawStats[0]?.vote_count ?? 0 : (rawStats as { vote_count: number } | null)?.vote_count ?? 0;
   const socials = (nominee.social_links as Record<string, string>) ?? {};
 
   await supabase.auth.getUser();
