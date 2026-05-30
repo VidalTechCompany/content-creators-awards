@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { UpdatePasswordForm } from "./update-password-form";
 
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: "Update password",
   robots: { index: false, follow: false },

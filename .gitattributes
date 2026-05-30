@@ -1,0 +1,10 @@
+# Set the default behavior to handle all files as text and normalize line endings to LF on check-in.
+* text=auto
+
+# Explicitly set line endings to LF for code files.
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.sql text eol=lf
+*.css text eol=lf
