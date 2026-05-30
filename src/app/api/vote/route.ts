@@ -16,7 +16,14 @@ async function verifyTurnstile(token: string) {
   const secret = process.env.TURNSTILE_SECRET_KEY;
   // Dev bypass logic as described in README
   if (!secret && process.env.NODE_ENV !== "production") return true;
-  if (!secret) return false;
+  if (!secret) {
+    console.error("[VOTE_API] CAPTCHA Error: TURNSTILE_SECRET_KEY is not defined.");
+    return false;
+  }
+  if (!token) {
+    console.error("[VOTE_API] CAPTCHA Error: No response token provided by client.");
+    return false;
+  }
 
   try {
     const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
@@ -25,6 +32,9 @@ async function verifyTurnstile(token: string) {
       body: `secret=${encodeURIComponent(secret)}&response=${encodeURIComponent(token)}`,
     });
     const data = await res.json();
+    if (!data.success) {
+      console.error("[VOTE_API] Turnstile verification failed. Error codes:", data["error-codes"]);
+    }
     return data.success;
   } catch (err) {
     console.error("Turnstile verification failed:", err);
@@ -58,10 +68,15 @@ export async function POST(request: Request) {
   }
 
   /**
-   * Cast to any because the captchaToken field was added to the request logic 
-   * but may be missing from the underlying Zod schema definition.
+   * We extract the captchaToken directly from the raw JSON because Zod 
+   * filters out unrecognized keys by default. 
+   * 
+   * TIP: To fix this permanently, add 'captchaToken: z.string()' to 
+   * your voteRequestSchema in @/lib/validation/vote.
    */
-  const { categoryId, nomineeId, fingerprint, captchaToken } = parsed.data as { categoryId: string; nomineeId: string; fingerprint: string; captchaToken: string };
+  const captchaToken = (json as { captchaToken?: string })?.captchaToken ?? "";
+  const { categoryId, nomineeId, fingerprint } = parsed.data as { categoryId: string; nomineeId: string; fingerprint: string };
+
 
   // 1. CAPTCHA Protection
   // Verifies the user is human before proceeding with heavy DB operations

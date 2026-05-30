@@ -3,6 +3,8 @@ import { AdminShell } from "./admin-shell";
 import type { AdminRole } from "@/types/database";
 import { getAdminRole } from "@/lib/admin/server";
 
+export const dynamic = "force-dynamic";
+
 export default async function AdminLayout({
   children
 }: {
