@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
-import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,11 +18,6 @@ export function SiteSettingsForm({ initial }: { initial: Settings }) {
     initial.voting_deadline ? new Date(initial.voting_deadline).toISOString().slice(0, 16) : "",
   );
   const [loading, setLoading] = useState(false);
-  const supabase = useMemo(() => createClient(), []);
-
-  useEffect(() => {
-    void supabase.auth.getSession();
-  }, [supabase]);
 
   async function save() {
     setLoading(true);

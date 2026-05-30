@@ -2,7 +2,6 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import type { AdminRole } from "@/types/database";
 import { cache } from "react";
-import { unstable_cache } from "next/cache";
 
 /**
  * Fetches the current user's admin role, leveraging React's cache to deduplicate
@@ -11,23 +10,16 @@ import { unstable_cache } from "next/cache";
  */
 export const getAdminRole = cache(async () => {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  console.log("[getAdminRole] getUser result:", { user: user?.email, userError });
   if (!user) return null;
 
-  // Wrap the DB query in a persistent cache
-  return unstable_cache(
-    async (userId: string) => {
-      const { data: adminRow } = await supabase
-        .from("admins")
-        .select("role")
-        .eq("user_id", userId)
-        .maybeSingle();
-      return adminRow?.role as AdminRole | null;
-    },
-    [`admin-role-${user.id}`],
-    {
-      revalidate: 600, // Cache for 10 minutes
-      tags: [`user-${user.id}`]
-    }
-  )(user.id);
+  console.log("[getAdminRole] Querying database for admin role for userId:", user.id);
+  const { data: adminRow, error: dbError } = await supabase
+    .from("admins")
+    .select("role")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  console.log("[getAdminRole] DB Query result:", { adminRow, dbError });
+  return (adminRow?.role as AdminRole | null) ?? null;
 });

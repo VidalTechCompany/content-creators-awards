@@ -38,12 +38,23 @@ export function LoginForm() {
     const user = data.user;
     let destination = next;
     if (user) {
-      const { data: adminRow } = await supabase
+      console.log("Logged in user:", user.id, user.email);
+      const { data: adminRow, error: adminError } = await supabase
         .from("admins")
-        .select("user_id")
+        .select("user_id, role")
         .eq("user_id", user.id)
         .maybeSingle();
-      if (adminRow) destination = "/admin";
+      
+      console.log("Admin check query result:", { adminRow, adminError });
+      if (adminError) {
+        toast.error(`Admin check failed: ${adminError.message}`);
+      }
+      if (adminRow) {
+        destination = "/admin";
+        console.log("User is admin. Redirecting to:", destination);
+      } else {
+        console.log("User is not admin. Redirecting to:", destination);
+      }
     }
     toast.success("Welcome back");
     window.location.href = destination;

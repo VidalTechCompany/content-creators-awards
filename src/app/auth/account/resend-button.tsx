@@ -12,23 +12,29 @@ export function ResendVerificationButton() {
   async function resend() {
     setLoading(true);
     const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const email = session?.user.email;
+      data: { user },
+      error,
+    } = await supabase.auth.getUser();
+    if (error) {
+      toast.error(error.message);
+      setLoading(false);
+      return;
+    }
+    const email = user?.email;
     if (!email) {
       toast.error("No active session");
       setLoading(false);
       return;
     }
     const origin = window.location.origin;
-    const { error } = await supabase.auth.resend({
+    const { error: resendError } = await supabase.auth.resend({
       type: "signup",
       email,
       options: { emailRedirectTo: `${origin}/auth/callback?next=/auth/account` },
     });
     setLoading(false);
-    if (error) {
-      toast.error(error.message);
+    if (resendError) {
+      toast.error(resendError.message);
       return;
     }
     toast.success("Verification email sent");

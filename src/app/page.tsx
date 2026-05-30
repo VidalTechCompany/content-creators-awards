@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { HeroSection } from "@/components/home/hero-section";
 import { FeaturedNominees } from "@/components/home/featured-nominees";
 import { createClientOrNull } from "@/lib/supabase/server";
+import type { SponsorRow } from "@/types/database";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export const revalidate = 3600; // Cache for 1 hour. Drastically reduces DB load during high traffic.
@@ -38,7 +39,7 @@ export default async function HomePage() {
   ]);
 
   const settings = settingsResult?.data;
-  const sponsors = (sponsorsResult?.data as any[]) ?? [];
+  const sponsors = (sponsorsResult?.data as SponsorRow[]) ?? [];
 
   return (
     <div>

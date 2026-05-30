@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import { Cormorant_Garamond, DM_Sans } from "next/font/google";
-import "@/app/globals.css";
+import "./globals.css";
 import { AppProviders } from "@/components/providers/app-providers";
 import { SessionProvider } from "@/components/providers/session-provider";
 import { SiteHeader } from "@/components/layout/site-header";
 import { SiteFooter } from "@/components/layout/site-footer";
 import { defaultMetadata } from "@/lib/seo";
 import { createClientOrNull } from "@/lib/supabase/server";
-import type { AdminRole } from "@/types/database";
 import { getAdminRole } from "@/lib/admin/server";
+import { type UserResponse } from "@supabase/supabase-js";
 
 const display = Cormorant_Garamond({
   subsets: ["latin"],
@@ -31,15 +31,16 @@ export default async function RootLayout({
 }>) {
   const supabase = await createClientOrNull();
 
-  // Parallelize the session and admin check. 
-  // getAdminRole is already cached via React.cache in lib/admin/server.ts
-  const [sessionData, adminRole] = await Promise.all([
-    supabase ? supabase.auth.getSession() : Promise.resolve({ data: { session: null } }),
-    getAdminRole()
+  // Parallelize the user and admin check. getUser authenticates the token with Supabase Auth.
+  const [userResult, adminResult] = await Promise.allSettled([
+    supabase ? supabase.auth.getUser() : Promise.resolve({ data: { user: null }, error: null }),
+    getAdminRole(),
   ]);
 
-  const session = sessionData.data.session;
-  const email = session?.user?.email ?? null;
+  const user = userResult.status === "fulfilled" ? (userResult.value as UserResponse).data?.user ?? null : null;
+  const adminRole = adminResult.status === "fulfilled" ? adminResult.value : null;
+
+  const email = user?.email ?? null;
   const isAdmin = !!adminRole;
 
   return (

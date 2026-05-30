@@ -59,7 +59,9 @@ export function UsersManager() {
                     <td className="py-2 pr-4">{u.email}</td>
                     <td className="py-2 pr-4">{u.display_name ?? "—"}</td>
                     <td className="py-2 pr-4">{u.vote_count}</td>
-                    <td className="py-2">{new Date(u.created_at).toLocaleDateString()}</td>
+                    <td className="py-2" suppressHydrationWarning>
+                      {new Date(u.created_at).toLocaleDateString()}
+                    </td>
                   </tr>
                 ))}
               </tbody>

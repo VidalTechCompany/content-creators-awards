@@ -15,21 +15,21 @@ const nextConfig = {
     remotePatterns: [
       {
         protocol: "https",
-        hostname: "*.supabase.co",
+        hostname: "**.supabase.co",
+      },
+      {
+        protocol: "https",
+        hostname: "**.supabase.com",
       },
     ],
   },
   async headers() {
     return [
       {
-        source: "/(.*)",
+        source: "/:path*",
         headers: securityHeaders,
       },
     ];
-  },
-  // Added this fix to bypass the strict ESLint check on Vercel
-  eslint: {
-    ignoreDuringBuilds: true,
   },
 };
 

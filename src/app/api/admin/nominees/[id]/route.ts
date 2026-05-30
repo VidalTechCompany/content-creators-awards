@@ -10,7 +10,8 @@ export async function PATCH(request: Request, { params }: Params) {
   try {
     assertTrustedOrigin(request);
   } catch {
-    return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
+    const origin = request.headers.get("origin") || "missing";
+    return NextResponse.json({ error: `Invalid origin: ${origin}` }, { status: 403 });
   }
 
   const ctx = await requireAdmin();
@@ -29,7 +30,9 @@ export async function PATCH(request: Request, { params }: Params) {
 
   const patch: Record<string, unknown> = {};
   if (parsed.data.category_id) patch.category_id = parsed.data.category_id;
+  if (parsed.data.subcategory_id !== undefined) patch.subcategory_id = parsed.data.subcategory_id;
   if (parsed.data.name) patch.name = parsed.data.name;
+  if (parsed.data.known_name !== undefined) patch.known_name = parsed.data.known_name;
   if (parsed.data.bio !== undefined) patch.bio = parsed.data.bio;
   if (parsed.data.image_url !== undefined) patch.image_url = parsed.data.image_url;
   if (parsed.data.social_links) patch.social_links = parsed.data.social_links;
@@ -48,7 +51,8 @@ export async function DELETE(request: Request, { params }: Params) {
   try {
     assertTrustedOrigin(request);
   } catch {
-    return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
+    const origin = request.headers.get("origin") || "missing";
+    return NextResponse.json({ error: `Invalid origin: ${origin}` }, { status: 403 });
   }
 
   const ctx = await requireAdmin("super_admin");

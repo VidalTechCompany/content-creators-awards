@@ -27,20 +27,17 @@ export default async function CategoryDetailPage({ params }: Props) {
 
   const { data: nominees } = await supabase
     .from("nominees")
-    .select("*, nominee_stats(vote_count)")
+    .select("*, subcategories(name), nominee_stats(vote_count)")
     .eq("category_id", category.id)
     .eq("status", "approved")
     .order("name");
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  await supabase.auth.getUser();
 
-  let canVote = false;
-  let verifyNote: string | null = null;
-  if (!user) verifyNote = "Log in to vote";
-  else if (!user.email_confirmed_at) verifyNote = "Verify your email to vote";
-  else canVote = true;
+  // Transitioning to anonymous voting: 
+  // Authentication is no longer a prerequisite for the UI button.
+  const canVote = true;
+  const verifyNote: string | null = null;
 
   return (
     <div className="mx-auto max-w-6xl py-12">
@@ -55,7 +52,9 @@ export default async function CategoryDetailPage({ params }: Props) {
           const stats = n.nominee_stats as { vote_count: number } | { vote_count: number }[] | null;
           const count = Array.isArray(stats) ? stats[0]?.vote_count ?? 0 : stats?.vote_count ?? 0;
           const id = String(n.id);
-          const name = String(n.name);
+          const officialName = String(n.name);
+          const knownName = n.known_name ? String(n.known_name) : officialName;
+          const subcategoryName = (n.subcategories as { name: string } | null)?.name;
           const bio = n.bio ? String(n.bio) : "";
           const imageUrl = n.image_url ? String(n.image_url) : null;
           const socials = (n.social_links as Record<string, string>) ?? {};
@@ -68,14 +67,17 @@ export default async function CategoryDetailPage({ params }: Props) {
               <div className="aspect-[16/9] w-full bg-gradient-to-br from-amber-500/15 to-zinc-900">
                 {imageUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={imageUrl} alt={name} className="h-full w-full object-cover" />
+                  <img src={imageUrl} alt={knownName} className="h-full w-full object-cover" />
                 ) : null}
               </div>
               <div className="flex flex-1 flex-col gap-3 p-5">
                 <div className="flex items-start justify-between gap-3">
                   <div>
+                    {subcategoryName && (
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-amber-500/60">{subcategoryName}</span>
+                    )}
                     <Link href={`/nominees/${id}`} className="font-serif text-xl text-amber-50 hover:text-amber-200">
-                      {name}
+                      {knownName}
                     </Link>
                     <NomineeLiveVotes nomineeId={id} initial={count} />
                   </div>
@@ -99,7 +101,7 @@ export default async function CategoryDetailPage({ params }: Props) {
                 <VoteWithCaptchaButton
                   categoryId={category.id}
                   nomineeId={id}
-                  nomineeName={name}
+                  nomineeName={knownName}
                   canVote={canVote}
                   verifyNote={verifyNote}
                 />

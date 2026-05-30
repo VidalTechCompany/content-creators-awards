@@ -19,7 +19,6 @@ const links = [
   { href: "/nominees", label: "Nominees" },
   { href: "/leaderboard", label: "Leaderboard" },
   { href: "/faq", label: "FAQ" },
-  { href: "/contact", label: "Contact" },
 ];
 
 export function SiteHeader() {

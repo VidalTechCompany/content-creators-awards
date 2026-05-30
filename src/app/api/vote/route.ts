@@ -12,11 +12,32 @@ function clientIp(request: Request) {
   return request.headers.get("x-real-ip");
 }
 
+async function verifyTurnstile(token: string) {
+  const secret = process.env.TURNSTILE_SECRET_KEY;
+  // Dev bypass logic as described in README
+  if (!secret && process.env.NODE_ENV !== "production") return true;
+  if (!secret) return false;
+
+  try {
+    const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `secret=${encodeURIComponent(secret)}&response=${encodeURIComponent(token)}`,
+    });
+    const data = await res.json();
+    return data.success;
+  } catch (err) {
+    console.error("Turnstile verification failed:", err);
+    return false;
+  }
+}
+
 export async function POST(request: Request) {
   try {
     assertTrustedOrigin(request);
   } catch {
-    return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
+    const origin = request.headers.get("origin") || "missing";
+    return NextResponse.json({ error: `Invalid origin: ${origin}` }, { status: 403 });
   }
 
   const ip = clientIp(request) ?? "0.0.0.0";
@@ -36,7 +57,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { categoryId, nomineeId, fingerprint } = parsed.data;
+  /**
+   * Cast to any because the captchaToken field was added to the request logic 
+   * but may be missing from the underlying Zod schema definition.
+   */
+  const { categoryId, nomineeId, fingerprint, captchaToken } = parsed.data as { categoryId: string; nomineeId: string; fingerprint: string; captchaToken: string };
+
+  // 1. CAPTCHA Protection
+  // Verifies the user is human before proceeding with heavy DB operations
+  const isHuman = await verifyTurnstile(captchaToken);
+  if (!isHuman) {
+    return NextResponse.json({ error: "CAPTCHA verification failed" }, { status: 403 });
+  }
 
   const supabase = await createClient();
   const {
@@ -56,6 +88,7 @@ export async function POST(request: Request) {
 
   const admin = createServiceClient();
 
+  // 2. Global System Checks (Deadline and Toggle)
   const { data: settings } = await admin.from("site_settings").select("*").eq("id", 1).maybeSingle();
   if (settings && settings.voting_open === false) {
     return NextResponse.json({ error: "Voting is closed" }, { status: 403 });
@@ -75,6 +108,18 @@ export async function POST(request: Request) {
 
   if (nomErr || !nominee || nominee.status !== "approved" || nominee.category_id !== categoryId) {
     return NextResponse.json({ error: "Invalid nominee or category" }, { status: 400 });
+  }
+
+  // 3. Device Fingerprinting check 
+  // Prevents "account farming" where one person uses 10 emails on the same laptop.
+  const { count: fingerprintCount } = await admin
+    .from("votes")
+    .select("*", { count: "exact", head: true })
+    .eq("category_id", categoryId)
+    .eq("fingerprint", fingerprint);
+
+  if ((fingerprintCount ?? 0) > 0) {
+    return NextResponse.json({ error: "This device has already been used to vote in this category" }, { status: 409 });
   }
 
   const { data: profile } = await admin.from("profiles").select("last_vote_at").eq("id", user.id).maybeSingle();

@@ -8,18 +8,28 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Plus, X } from "lucide-react";
+
+type CategoryWithSubs = CategoryRow & {
+  subcategories?: { id: string; name: string }[];
+};
 
 export function CategoriesManager({ role }: { role: AdminRole }) {
   const isSuper = role === "super_admin";
-  const [items, setItems] = useState<CategoryRow[]>([]);
+  const canEdit = role === "super_admin" || role === "moderator";
+  const [items, setItems] = useState<CategoryWithSubs[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [subForms, setSubForms] = useState<Record<string, string>>({});
+  const [addingSubTo, setAddingSubTo] = useState<string | null>(null);
   const [form, setForm] = useState({ title: "", section: "", description: "", sort_order: "0" });
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await adminFetch<{ categories: CategoryRow[] }>("/api/admin/categories");
+      const data = await adminFetch<{ categories: CategoryWithSubs[] }>("/api/admin/categories");
       setItems(data.categories);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to load");
@@ -55,12 +65,45 @@ export function CategoriesManager({ role }: { role: AdminRole }) {
 
   async function remove(id: string) {
     if (!isSuper || !confirm("Delete this category and its nominees?")) return;
+    setDeletingId(id);
     try {
       await adminFetch(`/api/admin/categories/${id}`, { method: "DELETE" });
       toast.success("Deleted");
-      void load();
+      await load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  async function addSub(categoryId: string) {
+    const name = subForms[categoryId];
+    if (!name?.trim() || !canEdit) return;
+    setAddingSubTo(categoryId);
+    try {
+      await adminFetch("/api/admin/subcategories", {
+        method: "POST",
+        body: JSON.stringify({ category_id: categoryId, name: name.trim() }),
+      });
+      toast.success("Subcategory added");
+      setSubForms(prev => ({ ...prev, [categoryId]: "" }));
+      void load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to add subcategory");
+    } finally {
+      setAddingSubTo(null);
+    }
+  }
+
+  async function deleteSub(subId: string) {
+    if (!isSuper || !confirm("Delete this subcategory?")) return;
+    try {
+      await adminFetch(`/api/admin/subcategories/${subId}`, { method: "DELETE" });
+      toast.success("Subcategory deleted");
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete");
     }
   }
 
@@ -110,19 +153,72 @@ export function CategoriesManager({ role }: { role: AdminRole }) {
             items.map((c) => (
               <div
                 key={c.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 p-3"
+                className="rounded-lg border border-white/10 p-4 space-y-4"
               >
-                <div>
-                  <p className="font-medium text-amber-50">{c.title}</p>
-                  <p className="text-xs text-zinc-500">
-                    {c.section} · /{c.slug} · order {c.sort_order}
-                  </p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="font-medium text-amber-50">{c.title}</p>
+                    <p className="text-xs text-zinc-500">
+                      {c.section} · /{c.slug} · order {c.sort_order}
+                    </p>
+                  </div>
+                  {isSuper ? (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      disabled={deletingId === c.id}
+                      onClick={() => void remove(c.id)}
+                    >
+                      {deletingId === c.id ? "Deleting..." : "Delete"}
+                    </Button>
+                  ) : null}
                 </div>
-                {isSuper ? (
-                  <Button variant="destructive" size="sm" onClick={() => void remove(c.id)}>
-                    Delete
-                  </Button>
-                ) : null}
+
+                <div className="space-y-3 bg-white/5 rounded-md p-3">
+                  <Label className="text-[10px] uppercase tracking-wider text-zinc-500">Subcategories</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {(c.subcategories || []).map((sub) => (
+                      <Badge key={sub.id} variant="secondary" className="flex items-center gap-1 pl-2 pr-1 py-0.5">
+                        <span className="text-xs">{sub.name}</span>
+                        {isSuper && (
+                          <button
+                            onClick={() => void deleteSub(sub.id)}
+                            className="rounded-full p-0.5 hover:bg-white/10 text-zinc-400 hover:text-rose-400 transition-colors"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        )}
+                      </Badge>
+                    ))}
+                    {(!c.subcategories || c.subcategories.length === 0) && (
+                      <p className="text-[10px] text-zinc-600 italic">No subcategories</p>
+                    )}
+                  </div>
+
+                  {canEdit && (
+                    <div className="flex gap-2 pt-1">
+                      <Input
+                        placeholder="New subcategory"
+                        className="h-8 text-xs bg-black/40 border-white/5"
+                        value={subForms[c.id] || ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setSubForms(prev => ({ ...prev, [c.id]: val }));
+                        }}
+                        onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), void addSub(c.id))}
+                      />
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 px-2 border-white/10"
+                        onClick={() => void addSub(c.id)}
+                        disabled={addingSubTo === c.id}
+                      >
+                        {addingSubTo === c.id ? <span className="text-[10px]">...</span> : <Plus className="h-3 w-3" />}
+                      </Button>
+                    </div>
+                  )}
+                </div>
               </div>
             ))
           )}

@@ -8,12 +8,13 @@ import type { AdminRole, CategoryRow, NomineeRow, NomineeStatus } from "@/types/
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Trophy, BarChart3, LayoutList } from "lucide-react";
 
 type NomineeWithMeta = NomineeRow & {
   categories: { title: string; slug: string } | null;
+  subcategories?: { name: string } | null;
   nominee_stats: { vote_count: number } | { vote_count: number }[] | null;
 };
 
@@ -27,20 +28,21 @@ export function NomineesManager({
   initialNominees?: NomineeWithMeta[];
 }) {
   const isSuper = role === "super_admin";
+  const [view, setView] = useState<"manage" | "analysis">("manage");
   const [categories, setCategories] = useState<CategoryRow[]>(initialCategories);
   const [nominees, setNominees] = useState<NomineeWithMeta[]>(initialNominees);
   const [filter, setFilter] = useState<NomineeStatus | "all">("all");
   const [loading, setLoading] = useState(initialNominees.length === 0);
   const [uploading, setUploading] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [form, setForm] = useState({
     category_id: initialCategories[0]?.id || "",
+    subcategory_id: initialCategories[0]?.subcategories?.[0]?.id || "",
     name: "",
-    bio: "",
-    instagram: "",
-    tiktok: "",
-    youtube: "",
+    known_name: "",
     status: "pending" as NomineeStatus,
   });
+  const [imageFile, setImageFile] = useState<File | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -53,7 +55,15 @@ export function NomineesManager({
       ]);
       setCategories(cats.categories);
       setNominees(noms.nominees);
-      setForm((f) => ({ ...f, category_id: f.category_id || cats.categories[0]?.id || "" }));
+      setForm((f) => {
+        if (!f.name && !f.known_name) {
+          const nextCategoryId = cats.categories[0]?.id || "";
+          const selectedCategory = cats.categories.find((c) => c.id === nextCategoryId);
+          const nextSubcategoryId = selectedCategory?.subcategories?.[0]?.id || "";
+          return { ...f, category_id: nextCategoryId, subcategory_id: nextSubcategoryId };
+        }
+        return f;
+      });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to load");
     } finally {
@@ -71,23 +81,41 @@ export function NomineesManager({
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
+    const categoryId = form.category_id || categories[0]?.id;
+    if (!categoryId) {
+      toast.error("Please select a category before creating a nominee.");
+      return;
+    }
+
     try {
-      await adminFetch("/api/admin/nominees", {
+      const res = await adminFetch<{ nominee: { id: string } }>("/api/admin/nominees", {
         method: "POST",
         body: JSON.stringify({
-          category_id: form.category_id,
+          category_id: categoryId,
+          subcategory_id: form.subcategory_id || null,
           name: form.name,
-          bio: form.bio || null,
+          known_name: form.known_name || null,
           status: form.status,
-          social_links: {
-            instagram: form.instagram || "",
-            tiktok: form.tiktok || "",
-            youtube: form.youtube || "",
-          },
         }),
       });
-      toast.success("Nominee created");
-      setForm((f) => ({ ...f, name: "", bio: "", instagram: "", tiktok: "", youtube: "" }));
+
+      const newNomineeId = res.nominee?.id;
+
+      if (newNomineeId && imageFile) {
+        await uploadImage(newNomineeId, imageFile);
+      }
+
+      toast.success("Nominee created successfully!");
+      setForm((f) => ({
+        ...f,
+        name: "",
+        known_name: "",
+      }));
+      setImageFile(null);
+
+      const fileInput = document.getElementById("nominee-image-input") as HTMLInputElement | null;
+      if (fileInput) fileInput.value = "";
+
       void load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Create failed");
@@ -127,12 +155,15 @@ export function NomineesManager({
 
   async function remove(id: string) {
     if (!isSuper || !confirm("Delete this nominee permanently?")) return;
+    setDeletingId(id);
     try {
       await adminFetch(`/api/admin/nominees/${id}`, { method: "DELETE" });
       toast.success("Deleted");
-      void load();
+      await load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -142,19 +173,147 @@ export function NomineesManager({
     return s?.vote_count ?? 0;
   }
 
+  const getWinners = () => {
+    const approved = nominees.filter((n) => n.status === "approved");
+
+    return categories.map((cat) => {
+      const catNominees = approved.filter((n) => n.category_id === cat.id);
+
+      const findTopNominees = (list: NomineeWithMeta[]) => {
+        if (list.length === 0) return [];
+        const maxVotes = Math.max(...list.map(voteCount));
+        // Filter for all nominees matching the max vote count to detect ties
+        return list.filter((n) => voteCount(n) === maxVotes);
+      };
+
+      // Group by subcategories if they exist
+      const subWinners = (cat.subcategories || [])
+        .map((sub) => {
+          const subNominees = catNominees.filter((n) => n.subcategory_id === sub.id);
+          const winners = findTopNominees(subNominees);
+          return { sub, winners };
+        })
+        .filter((sw) => sw.winners.length > 0);
+
+      // Overall category winner (useful if no subcategories exist)
+      const overallWinners = findTopNominees(catNominees);
+
+      return { category: cat, subWinners, overallWinners };
+    });
+  };
+
+  if (view === "analysis") {
+    const results = getWinners();
+    return (
+      <div className="space-y-6">
+        <div className="flex justify-between items-center">
+          <h2 className="text-lg font-semibold text-amber-50 flex items-center gap-2">
+            <Trophy className="h-5 w-5 text-amber-400" />
+            Winner Analysis
+          </h2>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => setView("manage")}>
+              <LayoutList className="mr-2 h-4 w-4" />
+              Back to Management
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid gap-6">
+          {results.map((res) => (
+            <Card key={res.category.id} className="border-amber-500/20 bg-amber-500/5">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center justify-between">
+                  {res.category.title}
+                  <Badge variant="outline" className="border-amber-500/30 text-amber-200">
+                    {res.category.section}
+                  </Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {res.overallWinners.length === 0 ? (
+                  <p className="text-sm text-zinc-500 italic text-center py-4">No approved nominees in this category yet.</p>
+                ) : res.subWinners.length > 0 ? (
+                  <div className="grid gap-3">
+                    {res.subWinners.map((sw) => (
+                      <div key={sw.sub.id} className="flex items-center justify-between p-3 rounded-lg bg-black/40 border border-white/5">
+                        <div className="flex-1">
+                          <p className="text-xs text-zinc-400 uppercase tracking-wider font-semibold">{sw.sub.name}</p>
+                          <div className="flex flex-col gap-0.5">
+                            {sw.winners.map((w) => (
+                              <p key={w.id} className="text-sm font-medium text-amber-50">
+                                {w.known_name || w.name}
+                              </p>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          {sw.winners.length > 1 ? (
+                            <Badge variant="outline" className="mb-1 border-amber-500/50 text-amber-500">Tie</Badge>
+                          ) : (
+                            <p className="text-xs text-zinc-500 italic">Leader</p>
+                          )}
+                          <Badge variant="default" className="bg-amber-600">
+                            {voteCount(sw.winners[0])} votes
+                          </Badge>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between p-4 rounded-xl bg-amber-500/10 border border-amber-500/20">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-amber-500/20 flex items-center justify-center">
+                        <Trophy className="h-5 w-5 text-amber-400" />
+                      </div>
+                      <div>
+                        <div className="flex flex-col gap-0.5">
+                          {res.overallWinners.map((w) => (
+                            <p key={w.id} className="text-sm font-medium text-amber-50">
+                              {w.known_name || w.name}
+                            </p>
+                          ))}
+                        </div>
+                        <p className="text-xs text-zinc-500">Highest overall votes</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-end gap-1">
+                      {res.overallWinners.length > 1 && (
+                        <Badge variant="outline" className="border-amber-500/50 text-amber-500">Tie</Badge>
+                      )}
+                      <Badge variant="default" className="bg-amber-600 px-3 py-1">
+                        {voteCount(res.overallWinners[0])} votes
+                      </Badge>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap gap-2">
-        {(["all", "pending", "approved", "rejected"] as const).map((s) => (
-          <Button
-            key={s}
-            size="sm"
-            variant={filter === s ? "default" : "outline"}
-            onClick={() => setFilter(s)}
-          >
-            {s}
-          </Button>
-        ))}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-wrap gap-2">
+          {(["all", "pending", "approved", "rejected"] as const).map((s) => (
+            <Button
+              key={s}
+              size="sm"
+              variant={filter === s ? "default" : "outline"}
+              onClick={() => setFilter(s)}
+            >
+              {s}
+            </Button>
+          ))}
+        </div>
+        <Button variant="secondary" size="sm" onClick={() => setView("analysis")} className="bg-amber-600 hover:bg-amber-700 text-white">
+          <BarChart3 className="mr-2 h-4 w-4" />
+          View Winners Analysis
+        </Button>
       </div>
 
       <Card>
@@ -168,7 +327,15 @@ export function NomineesManager({
               <select
                 className="flex h-10 w-full rounded-md border border-white/10 bg-black/40 px-3 text-sm text-zinc-100"
                 value={form.category_id}
-                onChange={(e) => setForm({ ...form, category_id: e.target.value })}
+                onChange={(e) => {
+                  const categoryId = e.target.value;
+                  const selectedCategory = categories.find((c) => c.id === categoryId);
+                  setForm({
+                    ...form,
+                    category_id: categoryId,
+                    subcategory_id: selectedCategory?.subcategories?.[0]?.id || "",
+                  });
+                }}
                 required
               >
                 {categories.map((c) => (
@@ -178,9 +345,28 @@ export function NomineesManager({
                 ))}
               </select>
             </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Subcategory</Label>
+              <select
+                className="flex h-10 w-full rounded-md border border-white/10 bg-black/40 px-3 text-sm text-zinc-100"
+                value={form.subcategory_id}
+                onChange={(e) => setForm({ ...form, subcategory_id: e.target.value })}
+              >
+                <option value="">Choose a subcategory</option>
+                {(categories.find((c) => c.id === form.category_id)?.subcategories ?? []).map((sub) => (
+                  <option key={sub.id} value={sub.id}>
+                    {sub.name}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="space-y-2">
-              <Label>Name</Label>
+              <Label>Official Name</Label>
               <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+            </div>
+            <div className="space-y-2">
+              <Label>Username</Label>
+              <Input value={form.known_name} onChange={(e) => setForm({ ...form, known_name: e.target.value })} required />
             </div>
             <div className="space-y-2">
               <Label>Status</Label>
@@ -194,23 +380,24 @@ export function NomineesManager({
                 <option value="rejected">rejected</option>
               </select>
             </div>
-            <div className="space-y-2 md:col-span-2">
-              <Label>Bio</Label>
-              <Textarea value={form.bio} onChange={(e) => setForm({ ...form, bio: e.target.value })} rows={3} />
-            </div>
             <div className="space-y-2">
-              <Label>Instagram URL</Label>
-              <Input value={form.instagram} onChange={(e) => setForm({ ...form, instagram: e.target.value })} />
+              <Label>Nominee Image</Label>
+              <Input
+                id="nominee-image-input"
+                type="file"
+                accept="image/*"
+                className="cursor-pointer"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) setImageFile(file);
+                }}
+              />
             </div>
-            <div className="space-y-2">
-              <Label>TikTok URL</Label>
-              <Input value={form.tiktok} onChange={(e) => setForm({ ...form, tiktok: e.target.value })} />
+            <div className="md:col-span-2 pt-2">
+              <Button type="submit" disabled={uploading !== null}>
+                {uploading ? "Uploading image…" : "Create nominee"}
+              </Button>
             </div>
-            <div className="space-y-2 md:col-span-2">
-              <Label>YouTube URL</Label>
-              <Input value={form.youtube} onChange={(e) => setForm({ ...form, youtube: e.target.value })} />
-            </div>
-            <Button type="submit">Create nominee</Button>
           </form>
         </CardContent>
       </Card>
@@ -241,11 +428,14 @@ export function NomineesManager({
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium text-amber-50">{n.name}</p>
+                      <p className="text-sm font-medium text-amber-50">
+                        {n.known_name ? `${n.known_name} (${n.name})` : n.name}
+                      </p>
                       <Badge variant={n.status === "approved" ? "default" : "secondary"}>{n.status}</Badge>
                     </div>
                     <p className="text-xs text-zinc-500">
-                      {n.categories?.title} · {voteCount(n)} votes
+                      {n.categories?.title}
+                      {n.subcategories?.name ? ` · ${n.subcategories.name}` : ""} · <span suppressHydrationWarning>{voteCount(n)}</span> votes
                     </p>
                     {n.image_url ? (
                       <Image
@@ -254,6 +444,7 @@ export function NomineesManager({
                         width={48} // Corresponds to h-12 (48px)
                         height={48} // Corresponds to w-12 (48px)
                         className="mt-2 rounded-md object-cover" // Keep other styles, remove h-12 w-12
+                        unoptimized
                       />
                     ) : null}
                   </div>
@@ -282,8 +473,13 @@ export function NomineesManager({
                       {uploading === n.id ? "Uploading…" : "Upload image"}
                     </label>
                     {isSuper ? (
-                      <Button size="sm" variant="destructive" onClick={() => void remove(n.id)}>
-                        Delete
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        disabled={deletingId === n.id}
+                        onClick={() => void remove(n.id)}
+                      >
+                        {deletingId === n.id ? "Deleting..." : "Delete"}
                       </Button>
                     ) : null}
                   </div>

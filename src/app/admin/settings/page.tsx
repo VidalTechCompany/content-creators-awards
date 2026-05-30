@@ -1,11 +1,20 @@
 import { createClient } from "@/lib/supabase/server";
+import { getAdminRole } from "@/lib/admin/server";
+import { redirect } from "next/navigation";
 import { SiteSettingsForm } from "./site-settings-form";
 
 export const revalidate = 0;
 
 export default async function AdminSettingsPage() {
+  const role = await getAdminRole();
+  if (!role) redirect("/auth/login?next=/admin");
+
   const supabase = await createClient();
-  const { data } = await supabase.from("site_settings").select("*").eq("id", 1).maybeSingle();
+  const { data, error } = await supabase.from("site_settings").select("*").eq("id", 1).maybeSingle();
+
+  if (error) {
+    console.error("Failed to fetch site settings:", error.message);
+  }
 
   return (
     <div className="space-y-6">

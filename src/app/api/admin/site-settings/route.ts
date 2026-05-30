@@ -12,7 +12,8 @@ export async function PATCH(request: Request) {
   try {
     assertTrustedOrigin(request);
   } catch {
-    return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
+    const origin = request.headers.get("origin") || "missing";
+    return NextResponse.json({ error: `Invalid origin: ${origin}` }, { status: 403 });
   }
 
   const supabase = await createClient();

@@ -2,6 +2,13 @@ export type AdminRole = "super_admin" | "moderator";
 
 export type NomineeStatus = "pending" | "approved" | "rejected";
 
+export type SubcategoryRow = {
+  id: string;
+  category_id: string;
+  name: string;
+  created_at: string;
+};
+
 export type CategoryRow = {
   id: string;
   slug: string;
@@ -10,12 +17,15 @@ export type CategoryRow = {
   description: string | null;
   sort_order: number;
   created_at: string;
+  subcategories?: SubcategoryRow[];
 };
 
 export type NomineeRow = {
   id: string;
   category_id: string;
+  subcategory_id?: string | null;
   name: string;
+  known_name?: string | null;
   slug: string;
   bio: string | null;
   image_url: string | null;

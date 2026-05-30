@@ -20,9 +20,10 @@ export function SessionInactivityProvider() {
       timer.current = setTimeout(async () => {
         if (!supabase) return;
         const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session) return;
+          data: { user },
+          error,
+        } = await supabase.auth.getUser();
+        if (error || !user) return;
         await supabase.auth.signOut();
         window.location.href = "/auth/login?reason=inactivity";
       }, INACTIVITY_MS);

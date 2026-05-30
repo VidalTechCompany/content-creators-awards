@@ -2,6 +2,8 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { Badge } from "@/components/ui/badge";
 import { createClientOrNull } from "@/lib/supabase/server";
+import { AWARD_CATEGORIES } from "@/app/admin/sponsors/categories";
+import type { CategoryRow } from "@/types/database";
 
 export const metadata: Metadata = {
   title: "Molo ni Nyumbani Award",
@@ -11,9 +13,14 @@ export const metadata: Metadata = {
 export const revalidate = 60;
 
 export default async function CategoriesPage() {
+  const subcategoriesBySlug = new Map(AWARD_CATEGORIES.map((category) => [category.id, category.subcategories]));
+
   const supabase = await createClientOrNull();
   const { data: categories } = supabase
-    ? await supabase.from("categories").select("*").order("sort_order", { ascending: true })
+    ? await supabase
+      .from("categories")
+      .select("id, slug, title, section, description")
+      .order("sort_order", { ascending: true })
     : { data: [] as never[] };
 
   return (
@@ -39,7 +46,7 @@ export default async function CategoriesPage() {
 
         {/* Categories Grid */}
         <div className="mt-16 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {(categories ?? []).map((c: { id: string; slug: string; title: string; section: string; description: string | null }) => (
+          {(categories as CategoryRow[] ?? []).map((c) => (
             <Link
               key={c.id}
               href={`/categories/${c.slug}`}
@@ -59,6 +66,20 @@ export default async function CategoriesPage() {
                   {c.description}
                 </p>
               ) : null}
+
+              {subcategoriesBySlug.get(c.slug)?.length ? (
+                <div className="mt-5 space-y-3 rounded-3xl border border-amber-500/10 bg-amber-500/5 p-4 text-sm text-zinc-300 shadow-sm shadow-black/10">
+                  <p className="text-xs uppercase tracking-[0.24em] text-amber-300/80">Subcategories</p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {subcategoriesBySlug.get(c.slug)?.map((sub) => (
+                      <span key={sub} className="inline-flex items-center rounded-full border border-white/10 bg-zinc-950/80 px-3 py-1 text-xs text-zinc-200">
+                        {sub}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
               <p className="mt-5 inline-flex items-center gap-1 text-sm font-medium text-amber-200/80 transition-colors group-hover:text-amber-400">
                 View Nominees <span className="inline-block transition-transform duration-300 group-hover:translate-x-1">→</span>
               </p>

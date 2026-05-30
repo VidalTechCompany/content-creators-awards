@@ -2,7 +2,6 @@
 import Link from "next/link";
 import Image from "next/image"; // Import the Image component
 import { Button } from "@/components/ui/button";
-import { ShareNomineeButton } from "./share-nominee-button";
 import type { NomineeRow } from "@/types/database";
 
 export function FeaturedNominees({ nominees }: { nominees: NomineeRow[] }) {

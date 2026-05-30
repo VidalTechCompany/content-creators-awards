@@ -11,9 +11,17 @@ export function assertTrustedOrigin(request: Request) {
 
   if (allowed.size === 0) return;
 
-  const candidate = origin ?? (referer ? new URL(referer).origin : null);
+  let candidate = origin;
+  if (!candidate && referer) {
+    try {
+      candidate = new URL(referer).origin;
+    } catch {
+      candidate = null;
+    }
+  }
+
   if (!candidate) {
-    throw new Error("Missing Origin");
+    candidate = new URL(request.url).origin;
   }
 
   if (!allowed.has(candidate)) {

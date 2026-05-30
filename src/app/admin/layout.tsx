@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { AdminShell } from "./admin-shell";
 import type { AdminRole } from "@/types/database";
-import { getAdminRole } from "@/lib/admin/server"; // 1. Uncommented this so it can be executed below
+import { getAdminRole } from "@/lib/admin/server";
 
 export default async function AdminLayout({
   children
@@ -10,12 +10,13 @@ export default async function AdminLayout({
 }) {
   const role = await getAdminRole();
 
-  // If getAdminRole returns null, it means either no user or user is not an admin.
-  // Redirect to login if no role is found.
   if (!role) {
     redirect("/auth/login?next=/admin");
   }
 
-  // Cast the role explicitly as AdminRole so TypeScript satisfies your AdminShell prop type
+  /**
+   * Cast as AdminRole to satisfy the AdminShell prop requirements.
+   * The redirect check above ensures that 'role' is non-null at this point.
+   */
   return <AdminShell role={role as AdminRole}>{children}</AdminShell>;
 }

@@ -13,8 +13,20 @@ import {
   Vote,
   ShieldAlert,
   Settings,
-  ArrowLeft
+  ArrowLeft,
+  UserCircle2,
+  LogOut
 } from "lucide-react";
+
+// Centralized configuration to remove hard-coded UI strings and identity labels
+const ADMIN_SHELL_CONFIG = {
+  identityLabel: "Authorized Admin",
+  logoutLabel: "Sign Out",
+  exitLabel: "Exit to Live Site",
+};
+
+// Helper for role presentation to keep the render block clean
+const formatAdminRole = (role: string) => role.replace(/_/g, " ");
 
 // Added specific Lucide icons for visual context and creative depth
 const nav = [
@@ -41,15 +53,33 @@ export function AdminShell({ role, children }: { role: AdminRole; children: Reac
         {/* Sidebar Container */}
         <aside className="md:w-72 md:sticky md:top-8 md:self-start rounded-2xl border border-white/[0.06] bg-zinc-900/40 p-5 shadow-2xl shadow-black/40 backdrop-blur-xl transition-all duration-300 hover:border-white/[0.1]">
 
-          {/* Header Profile Info */}
-          <div className="relative mb-6 overflow-hidden rounded-xl bg-gradient-to-r from-amber-500/[0.07] to-transparent p-4 border border-amber-500/[0.15]">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-amber-400">
-              System Operator
-            </p>
-            <p className="mt-1 text-sm font-semibold text-zinc-200 capitalize">
-              {role.replace("_", " ")}
-            </p>
-            <div className="absolute -right-2 -top-2 h-12 w-12 rounded-full bg-amber-500/10 blur-xl" />
+          {/* Refined Admin Identity Card */}
+          <div className="relative mb-8 group">
+            <div className="relative overflow-hidden rounded-2xl bg-zinc-950/40 p-4 border border-white/[0.08] transition-all duration-300 group-hover:border-amber-500/20">
+              <div className="flex items-center gap-3">
+                <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500/20 to-amber-600/5 text-amber-500 border border-amber-500/20 group-hover:from-amber-500/30 transition-all duration-500">
+                  <UserCircle2 className="h-6 w-6" />
+                  <span className="absolute -right-0.5 -top-0.5 flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 border-2 border-zinc-950"></span>
+                  </span>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-amber-500/60 leading-none mb-1">{ADMIN_SHELL_CONFIG.identityLabel}</p>
+                  <p className="text-sm font-bold text-zinc-100 capitalize truncate tracking-tight leading-none">{formatAdminRole(role)}</p>
+                </div>
+
+                {/* Actionable Profile Settings / Logout trigger */}
+                <button
+                  type="button"
+                  aria-label={ADMIN_SHELL_CONFIG.logoutLabel}
+                  className="h-8 w-8 flex items-center justify-center rounded-lg text-zinc-500 hover:bg-red-500/10 hover:text-red-400 transition-all duration-200"
+                >
+                  <LogOut className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="absolute -right-6 -bottom-6 h-20 w-20 rounded-full bg-amber-500/[0.03] blur-2xl group-hover:bg-amber-500/[0.08] transition-all duration-700" />
+            </div>
           </div>
 
           {/* Navigation Links */}
@@ -74,10 +104,13 @@ export function AdminShell({ role, children }: { role: AdminRole; children: Reac
                     <span className="absolute left-0 top-1/3 h-1/3 w-[3px] rounded-r-full bg-amber-400" />
                   )}
 
-                  <Icon className={cn(
-                    "h-4 w-4 transition-transform duration-300 group-hover:scale-110",
-                    active ? "text-amber-400" : "text-zinc-500 group-hover:text-zinc-300"
-                  )} />
+                  <Icon
+                    aria-hidden="true"
+                    className={cn(
+                      "h-4 w-4 transition-transform duration-300 group-hover:scale-110 will-change-transform",
+                      active ? "text-amber-400" : "text-zinc-500 group-hover:text-zinc-300"
+                    )}
+                  />
 
                   <span className="flex-1">{item.label}</span>
                 </Link>
@@ -91,8 +124,8 @@ export function AdminShell({ role, children }: { role: AdminRole; children: Reac
               href="/"
               className="group flex items-center gap-2 px-4 py-2 text-xs font-medium text-zinc-500 transition-colors duration-200 hover:text-amber-400"
             >
-              <ArrowLeft className="h-3 w-3 transition-transform duration-200 group-hover:-translate-x-1" />
-              <span>Exit to Live Site</span>
+              <ArrowLeft aria-hidden="true" className="h-3 w-3 transition-transform duration-200 group-hover:-translate-x-1 will-change-transform" />
+              <span>{ADMIN_SHELL_CONFIG.exitLabel}</span>
             </Link>
           </div>
         </aside>

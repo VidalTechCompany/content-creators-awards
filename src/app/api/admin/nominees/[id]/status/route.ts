@@ -9,7 +9,8 @@ export async function PATCH(request: Request, { params }: Params) {
   try {
     assertTrustedOrigin(request);
   } catch {
-    return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
+    const origin = request.headers.get("origin") || "missing";
+    return NextResponse.json({ error: `Invalid origin: ${origin}` }, { status: 403 });
   }
 
   const ctx = await requireAdmin();

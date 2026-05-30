@@ -1,8 +1,13 @@
 export async function adminFetch<T>(url: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers ?? undefined);
+  headers.set("content-type", "application/json");
+
   const res = await fetch(url, {
     ...init,
-    headers: { "content-type": "application/json", ...init?.headers },
+    credentials: "same-origin",
+    headers,
   });
+
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const err = body.error;

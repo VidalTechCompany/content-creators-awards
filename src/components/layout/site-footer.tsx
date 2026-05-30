@@ -22,9 +22,6 @@ export function SiteFooter() {
         </div>
         <div className="flex flex-col gap-2">
           <span className="text-xs uppercase tracking-widest text-zinc-500">Connect</span>
-          <Link href="/contact" className="hover:text-amber-200">
-            Contact
-          </Link>
           <Link href="/faq" className="hover:text-amber-200">
             FAQ
           </Link>

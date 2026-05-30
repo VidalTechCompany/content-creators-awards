@@ -8,7 +8,10 @@ export async function GET() {
   const ctx = await requireAdmin();
   if (isAdminResponse(ctx)) return ctx;
 
-  const { data, error } = await ctx.supabase.from("categories").select("*").order("sort_order");
+  const { data, error } = await ctx.supabase
+    .from("categories")
+    .select("*, subcategories(id, name, category_id)")
+    .order("sort_order");
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ categories: data });
 }

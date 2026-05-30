@@ -3,6 +3,32 @@ import { assertTrustedOrigin } from "@/lib/csrf";
 import { requireAdmin, isAdminResponse, audit } from "@/lib/admin/auth";
 import { nomineeSchema } from "@/lib/validation/admin";
 import { slugify } from "@/lib/slug";
+import { type SupabaseClient } from "@supabase/supabase-js";
+
+async function generateUniqueNomineeSlug(supabase: SupabaseClient, categoryId: string, baseSlug: string) {
+  const slugBase = baseSlug || `nominee`;
+  let slug = slugBase;
+  let index = 1;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("nominees")
+      .select("id")
+      .eq("category_id", categoryId)
+      .eq("slug", slug)
+      .limit(1);
+
+    if (error) {
+      throw error;
+    }
+
+    if (!data || data.length === 0) {
+      return slug;
+    }
+
+    slug = `${slugBase}-${index++}`;
+  }
+}
 
 export async function GET(request: Request) {
   const ctx = await requireAdmin();
@@ -29,7 +55,8 @@ export async function POST(request: Request) {
   try {
     assertTrustedOrigin(request);
   } catch {
-    return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
+    const origin = request.headers.get("origin") || "missing";
+    return NextResponse.json({ error: `Invalid origin: ${origin}` }, { status: 403 });
   }
 
   const ctx = await requireAdmin();
@@ -45,14 +72,17 @@ export async function POST(request: Request) {
   const parsed = nomineeSchema.safeParse(json);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
 
-  const slug = parsed.data.slug ?? slugify(parsed.data.name);
+  const baseSlug = slugify(parsed.data.slug ?? parsed.data.name) || `nominee`;
+  const slug = await generateUniqueNomineeSlug(ctx.supabase, parsed.data.category_id, baseSlug);
   const social = parsed.data.social_links ?? {};
 
   const { data, error } = await ctx.supabase
     .from("nominees")
     .insert({
       category_id: parsed.data.category_id,
+      subcategory_id: parsed.data.subcategory_id ?? null,
       name: parsed.data.name,
+      known_name: parsed.data.known_name ?? null,
       slug,
       bio: parsed.data.bio ?? null,
       image_url: parsed.data.image_url ?? null,

@@ -10,7 +10,9 @@ export const categorySchema = z.object({
 
 export const nomineeSchema = z.object({
   category_id: z.string().uuid(),
+  subcategory_id: z.string().uuid().optional().nullable(),
   name: z.string().min(2).max(120),
+  known_name: z.string().min(1).max(120).optional().nullable(),
   slug: z.string().min(2).max(80).regex(/^[a-z0-9-]+$/).optional(),
   bio: z.string().max(4000).optional().nullable(),
   image_url: z.string().url().optional().nullable(),

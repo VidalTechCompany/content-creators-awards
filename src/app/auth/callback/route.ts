@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import type { SetAllCookies } from "@supabase/ssr";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -23,7 +24,7 @@ export async function GET(request: Request) {
       getAll() {
         return cookieStore.getAll();
       },
-      setAll(cookiesToSet) {
+      setAll(cookiesToSet: Parameters<SetAllCookies>[0]) {
         cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options));
       },
     },

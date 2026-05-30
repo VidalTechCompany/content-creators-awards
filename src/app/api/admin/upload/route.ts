@@ -10,7 +10,8 @@ export async function POST(request: Request) {
   try {
     assertTrustedOrigin(request);
   } catch {
-    return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
+    const origin = request.headers.get("origin") || "missing";
+    return NextResponse.json({ error: `Invalid origin: ${origin}` }, { status: 403 });
   }
 
   const ctx = await requireAdmin();
@@ -53,10 +54,11 @@ export async function POST(request: Request) {
 
   const { data: pub } = admin.storage.from("nominee-images").getPublicUrl(path);
 
-  const { error: updateError } = await ctx.supabase
+  const { error: updateError } = await admin
     .from("nominees")
     .update({ image_url: pub.publicUrl })
-    .eq("id", nomineeId);
+    .eq("id", nomineeId)
+    .select();
 
   if (updateError) {
     return NextResponse.json({ error: updateError.message }, { status: 500 });
