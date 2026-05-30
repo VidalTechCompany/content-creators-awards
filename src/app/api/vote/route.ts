@@ -52,7 +52,7 @@ export async function POST(request: Request) {
   try {
     assertTrustedOrigin(request);
   } catch {
-    const origin = request.headers.get("origin") || "missing";
+    const origin = request.headers.get("origin") || request.headers.get("referer") || "missing";
     return NextResponse.json({ error: `Invalid origin: ${origin}` }, { status: 403 });
   }
 
@@ -70,6 +70,7 @@ export async function POST(request: Request) {
 
   const parsed = voteRequestSchema.safeParse(json);
   if (!parsed.success) {
+    console.error("[VOTE_API] Request validation failed:", parsed.error.format());
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
@@ -79,6 +80,7 @@ export async function POST(request: Request) {
   // Verifies the user is human before proceeding with heavy DB operations
   const isHuman = await verifyTurnstile(captchaToken, ip);
   if (!isHuman) {
+    console.error(`[VOTE_API] 403 Forbidden: CAPTCHA verification failed for IP ${ip}`);
     return NextResponse.json({ error: "CAPTCHA verification failed" }, { status: 403 });
   }
 
@@ -88,18 +90,10 @@ export async function POST(request: Request) {
   const authHeader = request.headers.get("Authorization");
   const jwtToken = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : undefined;
 
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser(jwtToken);
-
-  if (userError || !user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  if (!user.email_confirmed_at) {
-    return NextResponse.json({ error: "Email verification required before voting" }, { status: 403 });
-  }
+  // Authentication is now optional to allow "direct" voting from shared links
+  const { data: authData } = await supabase.auth.getUser(jwtToken);
+  const user = authData?.user;
+  const userId = user?.id;
 
   const ua = request.headers.get("user-agent") ?? "";
 
@@ -108,11 +102,13 @@ export async function POST(request: Request) {
   // 2. Global System Checks (Deadline and Toggle)
   const { data: settings } = await admin.from("site_settings").select("*").eq("id", 1).maybeSingle();
   if (settings && settings.voting_open === false) {
+    console.warn("[VOTE_API] 403 Forbidden: Voting is currently toggled OFF in settings.");
     return NextResponse.json({ error: "Voting is closed" }, { status: 403 });
   }
   if (settings?.voting_deadline) {
     const deadline = new Date(settings.voting_deadline);
     if (deadline.getTime() < Date.now()) {
+      console.warn("[VOTE_API] 403 Forbidden: Voting deadline has passed.");
       return NextResponse.json({ error: "Voting deadline has passed" }, { status: 403 });
     }
   }
@@ -139,14 +135,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "This device has already been used to vote in this category" }, { status: 409 });
   }
 
-  const { data: profile } = await admin.from("profiles").select("last_vote_at").eq("id", user.id).maybeSingle();
-  if (profile?.last_vote_at) {
-    const delta = (Date.now() - new Date(profile.last_vote_at).getTime()) / 1000;
-    if (delta < VOTE_COOLDOWN_SEC) {
-      return NextResponse.json(
-        { error: `Please wait ${Math.ceil(VOTE_COOLDOWN_SEC - delta)}s between votes` },
-        { status: 429 },
-      );
+  // Cooldown check only applies to registered users to prevent botting via session switching. 
+  // Guests are already throttled by IP and Fingerprint.
+  if (userId) {
+    const { data: profile } = await admin.from("profiles").select("last_vote_at").eq("id", userId).maybeSingle();
+    if (profile?.last_vote_at) {
+      const delta = (Date.now() - new Date(profile.last_vote_at).getTime()) / 1000;
+      if (delta < VOTE_COOLDOWN_SEC) {
+        return NextResponse.json(
+          { error: `Please wait ${Math.ceil(VOTE_COOLDOWN_SEC - delta)}s between votes` },
+          { status: 429 },
+        );
+      }
     }
   }
 
@@ -158,14 +158,14 @@ export async function POST(request: Request) {
 
   if ((ipBurst ?? 0) > 40) {
     await admin.from("suspicious_activity").insert({
-      user_id: user.id,
+      user_id: userId ?? null,
       reason: "high_ip_volume",
       meta: { ip, count: ipBurst },
     });
   }
 
   const { error: voteError } = await admin.from("votes").insert({
-    user_id: user.id,
+    user_id: userId ?? null, // Will be NULL for guest voters
     category_id: categoryId,
     nominee_id: nomineeId,
     ip_address: ip,
@@ -181,10 +181,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Could not record vote" }, { status: 500 });
   }
 
-  await admin.from("profiles").update({ last_vote_at: new Date().toISOString() }).eq("id", user.id);
+  if (userId) {
+    await admin.from("profiles").update({ last_vote_at: new Date().toISOString() }).eq("id", userId);
+  }
 
   await admin.from("audit_logs").insert({
-    actor_id: user.id,
+    actor_id: userId ?? '00000000-0000-0000-0000-000000000000', // Use a zero-UUID for guests
     action: "vote_cast",
     entity: "votes",
     entity_id: nomineeId,
