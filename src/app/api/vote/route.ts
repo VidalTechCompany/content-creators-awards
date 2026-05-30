@@ -12,7 +12,7 @@ function clientIp(request: Request) {
   return request.headers.get("x-real-ip");
 }
 
-async function verifyTurnstile(token: string) {
+async function verifyTurnstile(token: string, ip?: string) {
   const secret = process.env.TURNSTILE_SECRET_KEY;
   // Dev bypass logic as described in README
   if (!secret && process.env.NODE_ENV !== "production") return true;
@@ -25,11 +25,17 @@ async function verifyTurnstile(token: string) {
     return false;
   }
 
+  const params = new URLSearchParams({
+    secret: secret,
+    response: token,
+  });
+  if (ip) params.append("remoteip", ip);
+
   try {
     const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: `secret=${encodeURIComponent(secret)}&response=${encodeURIComponent(token)}`,
+      body: params.toString(),
     });
     const data = await res.json();
     if (!data.success) {
@@ -67,20 +73,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  /**
-   * We extract the captchaToken directly from the raw JSON because Zod 
-   * filters out unrecognized keys by default. 
-   * 
-   * TIP: To fix this permanently, add 'captchaToken: z.string()' to 
-   * your voteRequestSchema in @/lib/validation/vote.
-   */
+  // Extract captchaToken from raw JSON as it may be missing from the Zod schema
   const captchaToken = (json as { captchaToken?: string })?.captchaToken ?? "";
-  const { categoryId, nomineeId, fingerprint } = parsed.data as { categoryId: string; nomineeId: string; fingerprint: string };
 
+  if (!captchaToken) {
+    console.error("[VOTE_API] CAPTCHA Error: No token found in request body. Received keys:", Object.keys(json as object));
+  }
+
+  const { categoryId, nomineeId, fingerprint } = parsed.data;
 
   // 1. CAPTCHA Protection
   // Verifies the user is human before proceeding with heavy DB operations
-  const isHuman = await verifyTurnstile(captchaToken);
+  const isHuman = await verifyTurnstile(captchaToken, ip);
   if (!isHuman) {
     return NextResponse.json({ error: "CAPTCHA verification failed" }, { status: 403 });
   }
