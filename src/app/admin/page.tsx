@@ -1,8 +1,10 @@
 import { Suspense } from "react";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/server";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Vote, Award, Tags, HeartHandshake, ArrowUpRight, Users } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Vote, Award, Tags, HeartHandshake, ArrowUpRight, Users, Settings } from "lucide-react";
 import { getAdminRole } from "@/lib/admin/server";
 
 export const revalidate = 0; // Disable cache to ensure admin sees real-time data from the DB
@@ -102,6 +104,76 @@ export default async function AdminHomePage() {
         </div>
         <div className="absolute right-0 top-0 -z-10 h-32 w-32 rounded-full bg-amber-500/[0.08] blur-3xl" />
       </header>
+
+      {/* Management Quick Access */}
+      <section className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <Card className="border-white/[0.06] bg-zinc-900/40 backdrop-blur-md">
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Award className="h-5 w-5 text-amber-400" />
+              Content Management
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-zinc-400">Manage nominees, approve applications, and organize categories or subcategories.</p>
+            <div className="flex flex-wrap gap-3">
+              <Link href="/admin/nominees">
+                <Button size="sm" className="bg-amber-500 hover:bg-amber-600 text-black font-semibold">
+                  Launch Nominees Manager
+                </Button>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-white/[0.06] bg-zinc-900/40 backdrop-blur-md">
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Tags className="h-5 w-5 text-emerald-400" />
+              Structural Data
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-zinc-400">Define award categories, subcategories and sort orders for the public interface.</p>
+            <div className="flex flex-wrap gap-3">
+              <Link href="/admin/categories">
+                <Button size="sm" variant="outline" className="border-emerald-500/20 hover:bg-emerald-500/10 text-emerald-200">
+                  Manage Categories
+                </Button>
+              </Link>
+              <Link href="/admin/votes">
+                <Button size="sm" variant="outline" className="border-zinc-500/20 hover:bg-zinc-500/10 text-zinc-200">
+                  Live Leaderboard
+                </Button>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-white/[0.06] bg-zinc-900/40 backdrop-blur-md">
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Settings className="h-5 w-5 text-purple-400" />
+              System Settings
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-zinc-400">Configure voting deadlines, site-wide toggles, and review security audit logs.</p>
+            <div className="flex flex-wrap gap-3">
+              <Link href="/admin/settings">
+                <Button size="sm" variant="outline" className="border-purple-500/20 hover:bg-purple-500/10 text-purple-200">
+                  System Config
+                </Button>
+              </Link>
+              <Link href="/admin/suspicious">
+                <Button size="sm" variant="outline" className="border-red-500/20 hover:bg-red-500/10 text-red-200">
+                  Security Logs
+                </Button>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
 
       {/* Analytics Grid - Optimized Fallback to prevent Layout Shift */}
       <Suspense fallback={

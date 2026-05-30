@@ -8,42 +8,48 @@ import { VOTE_COOLDOWN_SEC } from "@/lib/constants";
 
 function clientIp(request: Request) {
   const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) return forwarded.split(",")[0]?.trim() ?? null;
+  if (forwarded) return forwarded.split(",")[0]?.trim() || null;
   return request.headers.get("x-real-ip");
 }
 
 async function verifyTurnstile(token: string, ip?: string) {
   const secret = process.env.TURNSTILE_SECRET_KEY;
-  // Dev bypass logic as described in README
-  if (!secret && process.env.NODE_ENV !== "production") return true;
-  if (!secret) {
-    console.error("[VOTE_API] CAPTCHA Error: TURNSTILE_SECRET_KEY is not defined.");
-    return false;
+
+  // Dev bypass: If secret is missing and we're not in production, allow for easier testing.
+  if (!secret && process.env.NODE_ENV !== "production") {
+    console.warn("[VOTE_API] CAPTCHA: No secret provided in dev mode, bypassing verification.");
+    return true;
   }
-  if (!token) {
-    console.error("[VOTE_API] CAPTCHA Error: No response token provided by client.");
+
+  if (!secret) {
+    console.error("[VOTE_API] CAPTCHA Error: TURNSTILE_SECRET_KEY environment variable is missing.");
     return false;
   }
 
-  const params = new URLSearchParams({
-    secret: secret,
-    response: token,
-  });
-  if (ip) params.append("remoteip", ip);
+  if (!token) {
+    console.error("[VOTE_API] CAPTCHA Error: Missing token from client.");
+    return false;
+  }
 
   try {
     const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: params.toString(),
+      body: new URLSearchParams({
+        secret,
+        response: token,
+        ...(ip && { remoteip: ip }),
+      }).toString(),
+      cache: 'no-store',
     });
+
     const data = await res.json();
-    if (!data.success) {
-      console.error("[VOTE_API] Turnstile verification failed. Error codes:", data["error-codes"]);
-    }
-    return data.success;
+    if (data.success) return true;
+
+    console.error(`[VOTE_API] CAPTCHA failed for ${ip}:`, data["error-codes"] || "Unknown error");
+    return false;
   } catch (err) {
-    console.error("Turnstile verification failed:", err);
+    console.error("[VOTE_API] Turnstile connection error:", err);
     return false;
   }
 }
@@ -129,7 +135,7 @@ export async function POST(request: Request) {
     .from("votes")
     .select("*", { count: "exact", head: true })
     .eq("category_id", categoryId)
-    .eq("fingerprint", fingerprint);
+    .eq("fingerprint", fingerprint.trim().slice(0, 512));
 
   if ((fingerprintCount ?? 0) > 0) {
     return NextResponse.json({ error: "This device has already been used to vote in this category" }, { status: 409 });

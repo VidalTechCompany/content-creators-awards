@@ -10,7 +10,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Trophy, BarChart3, LayoutList } from "lucide-react";
+import {
+  Trophy, BarChart3, LayoutList, Trash2, Pencil, X, Check
+} from "lucide-react";
 
 type NomineeWithMeta = NomineeRow & {
   categories: { title: string; slug: string } | null;
@@ -43,6 +45,23 @@ export function NomineesManager({
     status: "pending" as NomineeStatus,
   });
   const [imageFile, setImageFile] = useState<File | null>(null);
+  const [newSubName, setNewSubName] = useState("");
+  const [addingSub, setAddingSub] = useState(false);
+  const [editingSubId, setEditingSubId] = useState<string | null>(null);
+  const [editingSubName, setEditingSubName] = useState("");
+  const [updatingSub, setUpdatingSub] = useState(false);
+  const [newCatTitle, setNewCatTitle] = useState("");
+  const [addingCat, setAddingCat] = useState(false);
+  const [editingCatId, setEditingCatId] = useState<string | null>(null);
+  const [editingCatTitle, setEditingCatTitle] = useState("");
+  const [updatingCat, setUpdatingCat] = useState(false);
+  const [subSearch, setSubSearch] = useState("");
+
+  const selectedCategory = categories.find(c => c.id === form.category_id);
+
+  const filteredSubcategories = (selectedCategory?.subcategories ?? []).filter(sub =>
+    sub.name.toLowerCase().includes(subSearch.toLowerCase())
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -55,9 +74,11 @@ export function NomineesManager({
       ]);
       setCategories(cats.categories);
       setNominees(noms.nominees);
+
+      // Only set initial form values if category_id is missing to avoid resetting selections during refreshes
       setForm((f) => {
-        if (!f.name && !f.known_name) {
-          const nextCategoryId = cats.categories[0]?.id || "";
+        if (!f.category_id && cats.categories.length > 0) {
+          const nextCategoryId = cats.categories[0].id;
           const selectedCategory = cats.categories.find((c) => c.id === nextCategoryId);
           const nextSubcategoryId = selectedCategory?.subcategories?.[0]?.id || "";
           return { ...f, category_id: nextCategoryId, subcategory_id: nextSubcategoryId };
@@ -102,12 +123,12 @@ export function NomineesManager({
       const newNomineeId = res.nominee?.id;
 
       if (newNomineeId && imageFile) {
-        await uploadImage(newNomineeId, imageFile);
+        await uploadImage(newNomineeId, imageFile, false);
       }
 
       toast.success("Nominee created successfully!");
-      setForm((f) => ({
-        ...f,
+      setForm((prev) => ({
+        ...prev,
         name: "",
         known_name: "",
       }));
@@ -116,9 +137,136 @@ export function NomineesManager({
       const fileInput = document.getElementById("nominee-image-input") as HTMLInputElement | null;
       if (fileInput) fileInput.value = "";
 
-      void load();
+      await load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Create failed");
+    }
+  }
+
+  async function createSubcategory() {
+    const categoryId = form.category_id || categories[0]?.id;
+    if (!categoryId || !newSubName.trim()) return;
+    setAddingSub(true);
+    try {
+      const res = await adminFetch<{ subcategory: { id: string } }>("/api/admin/subcategories", {
+        method: "POST",
+        body: JSON.stringify({
+          category_id: categoryId,
+          name: newSubName.trim(),
+        }),
+      });
+      toast.success("Subcategory created successfully!");
+
+      const newSubId = res.subcategory?.id;
+      setNewSubName("");
+
+      // Refresh the local data to include the new subcategory
+      await load();
+
+      // Automatically select the newly created subcategory
+      if (newSubId) {
+        setForm(prev => ({ ...prev, subcategory_id: newSubId }));
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to create subcategory");
+    } finally {
+      setAddingSub(false);
+    }
+  }
+
+  async function updateSubcategory() {
+    if (!editingSubId || !editingSubName.trim()) return;
+    setUpdatingSub(true);
+    try {
+      await adminFetch(`/api/admin/subcategories/${editingSubId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name: editingSubName.trim() }),
+      });
+      toast.success("Subcategory updated");
+      setEditingSubId(null);
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Update failed");
+    } finally {
+      setUpdatingSub(false);
+    }
+  }
+
+  async function removeSubcategory(id: string) {
+    if (
+      !isSuper ||
+      !confirm("Delete this subcategory permanently? Nominees using it will have their subcategory cleared.")
+    )
+      return;
+    try {
+      await adminFetch(`/api/admin/subcategories/${id}`, { method: "DELETE" });
+      toast.success("Subcategory deleted");
+      if (form.subcategory_id === id) {
+        setForm((prev) => ({ ...prev, subcategory_id: "" }));
+      }
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Delete failed");
+    }
+  }
+
+  async function createCategory() {
+    if (!newCatTitle.trim()) return;
+    setAddingCat(true);
+    try {
+      await adminFetch("/api/admin/categories", {
+        method: "POST",
+        body: JSON.stringify({
+          title: newCatTitle.trim(),
+          slug: newCatTitle.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""),
+          section: "General",
+        }),
+      });
+      toast.success("Category created successfully!");
+      setNewCatTitle("");
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to create category");
+    } finally {
+      setAddingCat(false);
+    }
+  }
+
+  async function updateCategory() {
+    if (!editingCatId || !editingCatTitle.trim()) return;
+    setUpdatingCat(true);
+    try {
+      const cat = categories.find(c => c.id === editingCatId);
+      await adminFetch(`/api/admin/categories/${editingCatId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          title: editingCatTitle.trim(),
+          slug: editingCatTitle.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""),
+          section: cat?.section || "General",
+        }),
+      });
+      toast.success("Category updated");
+      setEditingCatId(null);
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Update failed");
+    } finally {
+      setUpdatingCat(false);
+    }
+  }
+
+  async function removeCategory(id: string) {
+    if (!isSuper || !confirm("Delete this category permanently? This will fail if it contains nominees or subcategories.")) return;
+    try {
+      await adminFetch(`/api/admin/categories/${id}`, { method: "DELETE" });
+      toast.success("Category deleted");
+      // Reset selection if the deleted category was selected
+      if (form.category_id === id) {
+        setForm(prev => ({ ...prev, category_id: "", subcategory_id: "" }));
+      }
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Delete failed");
     }
   }
 
@@ -135,7 +283,7 @@ export function NomineesManager({
     }
   }
 
-  async function uploadImage(nomineeId: string, file: File) {
+  async function uploadImage(nomineeId: string, file: File, shouldReload = true) {
     setUploading(nomineeId);
     try {
       const body = new FormData();
@@ -143,9 +291,9 @@ export function NomineesManager({
       body.set("nomineeId", nomineeId);
       const res = await fetch("/api/admin/upload", { method: "POST", body });
       const data = await res.json();
-      if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : "Upload failed");
+      if (!res.ok) throw new Error(data.error || "Upload failed");
       toast.success("Image uploaded");
-      void load();
+      if (shouldReload) await load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Upload failed");
     } finally {
@@ -170,7 +318,7 @@ export function NomineesManager({
   function voteCount(n: NomineeWithMeta) {
     const s = n.nominee_stats;
     if (Array.isArray(s)) return s[0]?.vote_count ?? 0;
-    return s?.vote_count ?? 0;
+    return (s as any)?.vote_count ?? 0;
   }
 
   const getWinners = () => {
@@ -253,7 +401,7 @@ export function NomineesManager({
                           ) : (
                             <p className="text-xs text-zinc-500 italic">Leader</p>
                           )}
-                          <Badge variant="default" className="bg-amber-600">
+                          <Badge variant="default" className="bg-amber-600" suppressHydrationWarning>
                             {voteCount(sw.winners[0])} votes
                           </Badge>
                         </div>
@@ -281,7 +429,7 @@ export function NomineesManager({
                       {res.overallWinners.length > 1 && (
                         <Badge variant="outline" className="border-amber-500/50 text-amber-500">Tie</Badge>
                       )}
-                      <Badge variant="default" className="bg-amber-600 px-3 py-1">
+                      <Badge variant="default" className="bg-amber-600 px-3 py-1" suppressHydrationWarning>
                         {voteCount(res.overallWinners[0])} votes
                       </Badge>
                     </div>
@@ -323,42 +471,168 @@ export function NomineesManager({
         <CardContent>
           <form className="grid gap-3 md:grid-cols-2" onSubmit={create}>
             <div className="space-y-2 md:col-span-2">
-              <Label>Category</Label>
-              <select
-                className="flex h-10 w-full rounded-md border border-white/10 bg-black/40 px-3 text-sm text-zinc-100"
-                value={form.category_id}
-                onChange={(e) => {
-                  const categoryId = e.target.value;
-                  const selectedCategory = categories.find((c) => c.id === categoryId);
-                  setForm({
-                    ...form,
-                    category_id: categoryId,
-                    subcategory_id: selectedCategory?.subcategories?.[0]?.id || "",
-                  });
-                }}
-                required
-              >
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.title}
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center justify-between">
+                <Label>Category</Label>
+                {form.category_id && isSuper && !editingCatId && (
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-xs text-blue-400 hover:text-blue-500 hover:bg-blue-500/10"
+                      onClick={() => {
+                        setEditingCatId(form.category_id);
+                        setEditingCatTitle(selectedCategory?.title || "");
+                      }}
+                    >
+                      <Pencil className="h-3 w-3 mr-1" />
+                      Edit
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-xs text-red-400 hover:text-red-500 hover:bg-red-500/10"
+                      onClick={() => void removeCategory(form.category_id)}
+                    >
+                      <Trash2 className="h-3 w-3 mr-1" />
+                      Delete
+                    </Button>
+                  </div>
+                )}
+              </div>
+              {editingCatId ? (
+                <div className="flex gap-2">
+                  <Input
+                    value={editingCatTitle}
+                    onChange={(e) => setEditingCatTitle(e.target.value)}
+                    className="h-10 text-sm"
+                  />
+                  <Button type="button" size="sm" onClick={() => void updateCategory()} disabled={updatingCat || !editingCatTitle.trim()}>
+                    {updatingCat ? "..." : <Check className="h-4 w-4" />}
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" onClick={() => setEditingCatId(null)}>
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : (
+                <select
+                  className="flex h-10 w-full rounded-md border border-white/10 bg-black/40 px-3 text-sm text-zinc-100"
+                  value={form.category_id}
+                  onChange={(e) => {
+                    const categoryId = e.target.value;
+                    const selectedCategory = categories.find((c) => c.id === categoryId);
+                    setSubSearch("");
+                    setForm({
+                      ...form,
+                      category_id: categoryId,
+                      subcategory_id: selectedCategory?.subcategories?.[0]?.id || "",
+                    });
+                  }}
+                  required
+                >
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.title}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <div className="mt-2 flex gap-2">
+                <Input
+                  placeholder="New category title..."
+                  value={newCatTitle}
+                  onChange={(e) => setNewCatTitle(e.target.value)}
+                  className="h-9 text-xs"
+                />
+                <Button type="button" variant="outline" size="sm" onClick={() => void createCategory()} disabled={addingCat || !newCatTitle.trim()}>
+                  {addingCat ? "Adding..." : "Add Category"}
+                </Button>
+              </div>
             </div>
             <div className="space-y-2 md:col-span-2">
-              <Label>Subcategory</Label>
-              <select
-                className="flex h-10 w-full rounded-md border border-white/10 bg-black/40 px-3 text-sm text-zinc-100"
-                value={form.subcategory_id}
-                onChange={(e) => setForm({ ...form, subcategory_id: e.target.value })}
-              >
-                <option value="">Choose a subcategory</option>
-                {(categories.find((c) => c.id === form.category_id)?.subcategories ?? []).map((sub) => (
-                  <option key={sub.id} value={sub.id}>
-                    {sub.name}
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center justify-between">
+                <Label>Subcategory</Label>
+                {form.subcategory_id && isSuper && !editingSubId && (
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-xs text-blue-400 hover:text-blue-500 hover:bg-blue-500/10"
+                      onClick={() => {
+                        const sub = selectedCategory?.subcategories?.find((s) => s.id === form.subcategory_id);
+                        if (sub) {
+                          setEditingSubId(sub.id);
+                          setEditingSubName(sub.name);
+                        }
+                      }}
+                    >
+                      <Pencil className="h-3 w-3 mr-1" />
+                      Edit
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-xs text-red-400 hover:text-red-500 hover:bg-red-500/10"
+                      onClick={() => void removeSubcategory(form.subcategory_id)}
+                    >
+                      <Trash2 className="h-3 w-3 mr-1" />
+                      Delete
+                    </Button>
+                  </div>
+                )}
+              </div>
+              {editingSubId ? (
+                <div className="flex gap-2">
+                  <Input
+                    value={editingSubName}
+                    onChange={(e) => setEditingSubName(e.target.value)}
+                    className="h-10 text-sm"
+                  />
+                  <Button type="button" size="sm" onClick={() => void updateSubcategory()} disabled={updatingSub || !editingSubName.trim()}>
+                    {updatingSub ? "..." : <Check className="h-4 w-4" />}
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" onClick={() => setEditingSubId(null)}>
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {(selectedCategory?.subcategories?.length ?? 0) > 5 && (
+                    <Input
+                      placeholder="Search subcategories..."
+                      value={subSearch}
+                      onChange={(e) => setSubSearch(e.target.value)}
+                      className="h-8 text-xs bg-black/20 border-white/5"
+                    />
+                  )}
+                  <select
+                    className="flex h-10 w-full rounded-md border border-white/10 bg-black/40 px-3 text-sm text-zinc-100"
+                    value={form.subcategory_id}
+                    onChange={(e) => setForm({ ...form, subcategory_id: e.target.value })}
+                  >
+                    <option value="">Choose a subcategory</option>
+                    {filteredSubcategories.map((sub) => (
+                      <option key={sub.id} value={sub.id}>
+                        {sub.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <div className="mt-2 flex gap-2">
+                <Input
+                  placeholder="New subcategory name..."
+                  value={newSubName}
+                  onChange={(e) => setNewSubName(e.target.value)}
+                  className="h-9 text-xs"
+                />
+                <Button type="button" variant="outline" size="sm" onClick={() => void createSubcategory()} disabled={addingSub || !newSubName.trim()}>
+                  {addingSub ? "Adding..." : "Add Subcategory"}
+                </Button>
+              </div>
             </div>
             <div className="space-y-2">
               <Label>Official Name</Label>
@@ -489,6 +763,6 @@ export function NomineesManager({
           )}
         </CardContent>
       </Card>
-    </div>
+    </div >
   );
 }

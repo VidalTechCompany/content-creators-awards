@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { createClientOrNull } from "@/lib/supabase/server";
+import Image from "next/image";
 import { VoteWithCaptchaButton } from "@/components/voting/vote-with-captcha-button";
 import { NomineeLiveVotes } from "@/components/realtime/nominee-live-votes";
 import { SocialShareButtons } from "@/components/voting/social-share-buttons";
@@ -66,11 +67,12 @@ export default async function NomineeProfilePage({ params }: Props) {
 
   if (!nominee) notFound();
 
-  const cat = nominee.categories;
-  const category = (Array.isArray(cat) ? cat[0] : cat) as { id: string; slug: string; title: string };
-  const subcategory = nominee.subcategories as { name: string } | null;
-  const stats = nominee.nominee_stats as { vote_count: number } | { vote_count: number }[] | null;
-  const initialVotes = Array.isArray(stats) ? stats[0]?.vote_count ?? 0 : stats?.vote_count ?? 0;
+  const rawCat = nominee.categories;
+  const category = (Array.isArray(rawCat) ? rawCat[0] : rawCat) as any;
+  const rawSub = nominee.subcategories;
+  const subcategory = (Array.isArray(rawSub) ? rawSub[0] : rawSub) as any;
+  const rawStats = nominee.nominee_stats;
+  const initialVotes = Array.isArray(rawStats) ? rawStats[0]?.vote_count ?? 0 : (rawStats as any)?.vote_count ?? 0;
   const socials = (nominee.social_links as Record<string, string>) ?? {};
 
   await supabase.auth.getUser();
@@ -85,10 +87,17 @@ export default async function NomineeProfilePage({ params }: Props) {
       <div className="overflow-hidden rounded-3xl border border-white/10 bg-white/5 shadow-2xl shadow-black/40 backdrop-blur-xl">
         <div className="grid gap-0 md:grid-cols-2">
           <div className="aspect-square bg-gradient-to-br from-amber-500/25 to-zinc-950 md:aspect-auto md:min-h-[420px]">
-            {nominee.image_url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={nominee.image_url} alt={nominee.name} className="h-full w-full object-cover" />
-            ) : null}
+            {nominee.image_url && (
+              <div className="relative h-full w-full">
+                <Image
+                  src={nominee.image_url}
+                  alt={nominee.name}
+                  fill
+                  className="object-cover"
+                  unoptimized
+                />
+              </div>
+            )}
           </div>
           <div className="flex flex-col gap-4 p-8">
             <div className="flex items-center justify-between">

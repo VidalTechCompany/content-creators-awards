@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { createClientOrNull } from "@/lib/supabase/server";
 import { VoteWithCaptchaButton } from "@/components/voting/vote-with-captcha-button";
+import Image from "next/image";
 import { NomineeLiveVotes } from "@/components/realtime/nominee-live-votes";
 
 type Props = { params: Promise<{ slug: string }> };
@@ -54,7 +55,8 @@ export default async function CategoryDetailPage({ params }: Props) {
           const id = String(n.id);
           const officialName = String(n.name);
           const knownName = n.known_name ? String(n.known_name) : officialName;
-          const subcategoryName = (n.subcategories as { name: string } | null)?.name;
+          const rawSub = n.subcategories;
+          const subcategoryName = Array.isArray(rawSub) ? rawSub[0]?.name : (rawSub as any)?.name;
           const bio = n.bio ? String(n.bio) : "";
           const imageUrl = n.image_url ? String(n.image_url) : null;
           const socials = (n.social_links as Record<string, string>) ?? {};
@@ -65,10 +67,17 @@ export default async function CategoryDetailPage({ params }: Props) {
               className="flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/5 shadow-xl shadow-black/30 backdrop-blur-md"
             >
               <div className="aspect-[16/9] w-full bg-gradient-to-br from-amber-500/15 to-zinc-900">
-                {imageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={imageUrl} alt={knownName} className="h-full w-full object-cover" />
-                ) : null}
+                {imageUrl && (
+                  <div className="relative h-full w-full">
+                    <Image
+                      src={imageUrl}
+                      alt={knownName}
+                      fill
+                      className="object-cover"
+                      unoptimized
+                    />
+                  </div>
+                )}
               </div>
               <div className="flex flex-1 flex-col gap-3 p-5">
                 <div className="flex items-start justify-between gap-3">
