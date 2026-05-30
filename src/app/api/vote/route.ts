@@ -73,14 +73,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  // Extract captchaToken from raw JSON as it may be missing from the Zod schema
-  const captchaToken = (json as { captchaToken?: string })?.captchaToken ?? "";
-
-  if (!captchaToken) {
-    console.error("[VOTE_API] CAPTCHA Error: No token found in request body. Received keys:", Object.keys(json as object));
-  }
-
-  const { categoryId, nomineeId, fingerprint } = parsed.data;
+  const { categoryId, nomineeId, fingerprint, captchaToken } = parsed.data;
 
   // 1. CAPTCHA Protection
   // Verifies the user is human before proceeding with heavy DB operations
@@ -90,10 +83,15 @@ export async function POST(request: Request) {
   }
 
   const supabase = await createClient();
+
+  // Support for manual Authorization header as an alternative to cookies
+  const authHeader = request.headers.get("Authorization");
+  const jwtToken = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : undefined;
+
   const {
     data: { user },
     error: userError,
-  } = await supabase.auth.getUser();
+  } = await supabase.auth.getUser(jwtToken);
 
   if (userError || !user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
