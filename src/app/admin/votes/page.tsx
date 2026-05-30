@@ -39,53 +39,55 @@ export default async function AdminVotesPage() {
         <CardHeader>
           <CardTitle>Vote Leaderboard</CardTitle>
         </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Nominee</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Total Votes</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {leaderboard?.map((item) => {
-                // Handle Supabase returning joined stats as an array
-                const statsData = Array.isArray(item.nominee_stats) ? item.nominee_stats[0] : item.nominee_stats;
-                const stats = statsData as unknown as { vote_count: number } | null;
-                const categoryData = Array.isArray(item.categories) ? item.categories[0] : item.categories;
-                const category = categoryData as unknown as { title: string } | null;
+        <CardContent className="p-0 sm:p-6">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="min-w-[160px]">Nominee</TableHead>
+                  <TableHead className="min-w-[140px]">Category</TableHead>
+                  <TableHead className="w-[100px]">Status</TableHead>
+                  <TableHead className="text-right w-[120px]">Total Votes</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {leaderboard?.map((item) => {
+                  // Handle Supabase returning joined stats as an array
+                  const statsData = Array.isArray(item.nominee_stats) ? item.nominee_stats[0] : item.nominee_stats;
+                  const stats = statsData as unknown as { vote_count: number } | null;
+                  const categoryData = Array.isArray(item.categories) ? item.categories[0] : item.categories;
+                  const category = categoryData as unknown as { title: string } | null;
 
-                return (
-                  <TableRow key={item.id}>
-                    <TableCell className="font-medium text-amber-50">
-                      {item.known_name || item.name}
-                      {item.known_name && <span className="ml-2 text-xs text-zinc-500">({item.name})</span>}
-                    </TableCell>
-                    <TableCell className="text-zinc-400">{category?.title || "N/A"}</TableCell>
-                    <TableCell>
-                      <span className={`text-xs uppercase tracking-tighter ${item.status === 'approved' ? 'text-emerald-500' :
-                        item.status === 'pending' ? 'text-amber-500' : 'text-rose-500'
-                        }`}>
-                        {item.status}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-amber-200" suppressHydrationWarning>
-                      {(stats?.vote_count ?? 0).toLocaleString()}
+                  return (
+                    <TableRow key={item.id}>
+                      <TableCell className="font-medium text-amber-50">
+                        {item.known_name || item.name}
+                        {item.known_name && <span className="ml-2 block text-[10px] text-zinc-500 sm:inline sm:text-xs">({item.name})</span>}
+                      </TableCell>
+                      <TableCell className="text-zinc-400">{category?.title || "N/A"}</TableCell>
+                      <TableCell>
+                        <span className={`text-[10px] uppercase tracking-wider font-bold ${item.status === 'approved' ? 'text-emerald-500' :
+                          item.status === 'pending' ? 'text-amber-500' : 'text-rose-500'
+                          }`}>
+                          {item.status}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-amber-200" suppressHydrationWarning>
+                        {(stats?.vote_count ?? 0).toLocaleString()}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+                {(!leaderboard || leaderboard.length === 0) && (
+                  <TableRow>
+                    <TableCell colSpan={4} className="text-center py-8 text-zinc-500">
+                      No voting data available yet.
                     </TableCell>
                   </TableRow>
-                );
-              })}
-              {(!leaderboard || leaderboard.length === 0) && (
-                <TableRow>
-                  <TableCell colSpan={4} className="text-center py-8 text-zinc-500">
-                    No voting data available yet.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
+                )}
+              </TableBody>
+            </Table>
+          </div>
         </CardContent>
       </Card>
 

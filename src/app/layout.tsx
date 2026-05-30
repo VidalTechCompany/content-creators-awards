@@ -52,7 +52,9 @@ export default async function RootLayout({
           <SessionProvider email={email} isAdmin={isAdmin} adminRole={adminRole}>
             <div className="flex min-h-screen flex-col">
               <SiteHeader />
-              <div className="flex-1">{children}</div>
+              <main className="flex-1 w-full overflow-hidden">
+                {children}
+              </main>
               <SiteFooter />
             </div>
           </SessionProvider>

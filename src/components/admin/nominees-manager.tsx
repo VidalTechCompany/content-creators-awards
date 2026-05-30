@@ -158,7 +158,7 @@ export function NomineesManager({
     setDeletingId(id);
     try {
       await adminFetch(`/api/admin/nominees/${id}`, { method: "DELETE" });
-      toast.success("Deleted");
+      toast.success("Nominee and associated assets deleted");
       await load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Delete failed");
