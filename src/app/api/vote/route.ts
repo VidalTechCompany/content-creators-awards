@@ -87,11 +87,12 @@ export async function POST(request: Request) {
   const parsed = voteRequestSchema.safeParse(payload);
 
   if (!parsed.success) {
-    const receivedKeys = typeof json === 'object' && json !== null ? Object.keys(json) : 'not_an_object';
+    const received = typeof json === 'object' && json !== null ? json : {};
     console.error(
-      "[VOTE_API] 400 Bad Request - Validation Failed.",
-      "Received keys:", receivedKeys,
-      "Errors:", JSON.stringify(parsed.error.flatten())
+      "[VOTE_API] 400 Bad Request - Validation Failed.\n",
+      "Received Payload:", JSON.stringify(received), "\n",
+      "IP Address:", ip, "\n",
+      "Zod Errors:", JSON.stringify(parsed.error.flatten(), null, 2)
     );
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
