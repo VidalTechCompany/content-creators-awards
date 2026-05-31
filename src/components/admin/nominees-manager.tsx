@@ -87,15 +87,13 @@ export function NomineesManager({
       setCategories(cats.categories);
       setNominees(noms.nominees);
 
-      // Only set initial form values if category_id is missing to avoid resetting selections during refreshes
       setForm((f) => {
-        if (!f.category_id && cats.categories.length > 0) {
-          const nextCategoryId = cats.categories[0].id;
-          const selectedCategory = cats.categories.find((c) => c.id === nextCategoryId);
-          const nextSubcategoryId = selectedCategory?.subcategories?.[0]?.id || "";
-          return { ...f, category_id: nextCategoryId, subcategory_id: nextSubcategoryId };
-        }
-        return f;
+        const nextCatId = f.category_id || cats.categories[0]?.id || "";
+        const selected = cats.categories.find(c => c.id === nextCatId);
+        // Sync subcategory if it was empty but we now have options
+        const nextSubId = f.subcategory_id || selected?.subcategories?.[0]?.id || "";
+
+        return { ...f, category_id: nextCatId, subcategory_id: nextSubId };
       });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to load");
@@ -104,16 +102,10 @@ export function NomineesManager({
     }
   }, [filter]);
 
-  // Track if we are performing the first load to prevent double-fetching
-  const [hasLoadedInitial, setHasLoadedInitial] = useState(false);
-
   useEffect(() => {
-    // Reload if the filter changes, or if we don't have initial data
-    if (hasLoadedInitial || (initialNominees.length === 0 && initialCategories.length === 0)) {
-      void load();
-    }
-    setHasLoadedInitial(true);
-  }, [filter, load, hasLoadedInitial, initialNominees.length, initialCategories.length]);
+    // Data in admin managers should always be fresh.
+    void load();
+  }, [filter, load]);
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
