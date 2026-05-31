@@ -1,5 +1,4 @@
 import Link from "next/link";
-import type { Metadata } from "next";
 import { Badge } from "@/components/ui/badge";
 import { createClientOrNull } from "@/lib/supabase/server";
 import type { CategoryRow } from "@/types/database";
@@ -46,7 +45,8 @@ export default async function CategoriesPage() {
       console.error("Supabase categories fetch error:", error);
       fetchError = error.message;
     } else {
-      categories = (data as any[]) || [];
+      // Supabase returns an array or null; coerce safely to our typed shape
+      categories = Array.isArray(data) ? (data as unknown as CategoryWithSubs[]) : [];
     }
   } catch (err) {
     console.error("Unexpected error fetching categories:", err);

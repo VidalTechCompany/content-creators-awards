@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { adminFetch } from '@/lib/admin/fetch';
 import { Plus, X, Loader2, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -37,11 +37,7 @@ export default function CategoriesPage() {
   });
   const [selectedSection, setSelectedSection] = useState<string>("");
 
-  useEffect(() => {
-    fetchCategories();
-  }, [selectedSection]);
-
-  const fetchCategories = async (showLoading = true) => {
+  const fetchCategories = useCallback(async (showLoading = true) => {
     try {
       if (showLoading) setLoading(true);
       setError(null);
@@ -58,7 +54,11 @@ export default function CategoriesPage() {
     } finally {
       if (showLoading) setLoading(false);
     }
-  };
+  }, [selectedSection]);
+
+  useEffect(() => {
+    void fetchCategories();
+  }, [fetchCategories]);
 
   const generateSlug = (title: string) => {
     return title

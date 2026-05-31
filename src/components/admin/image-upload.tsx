@@ -41,7 +41,8 @@ export function ImageUpload({ nomineeId, currentImageUrl, onUploadComplete }: Im
             let data;
             try {
                 data = await res.json();
-            } catch (e) {
+            } catch (parseErr) {
+                console.error("Failed to parse upload response:", parseErr);
                 data = {};
             }
 

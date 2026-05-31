@@ -345,7 +345,8 @@ export function NomineesManager({
       try {
         const text = await res.text();
         data = text ? JSON.parse(text) : {};
-      } catch (e) {
+      } catch (parseErr) {
+        console.error("Failed to parse upload response:", parseErr);
         data = {};
       }
 

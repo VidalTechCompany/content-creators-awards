@@ -3,7 +3,6 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { createClientOrNull } from "@/lib/supabase/server";
 import { VoteWithCaptchaButton } from "@/components/voting/vote-with-captcha-button";
-import Image from "next/image";
 import { ImageWithFallback } from "@/components/ui/image-with-fallback";
 import { NomineeLiveVotes } from "@/components/realtime/nominee-live-votes";
 
@@ -34,14 +33,7 @@ interface Nominee {
   nominee_stats: NomineeStats | NomineeStats[] | null;
 }
 
-interface Category {
-  id: string;
-  title: string;
-  slug: string;
-  section: string;
-  description: string | null;
-  status: string;
-}
+// Category type is inherited from Supabase rows where needed; explicit local interface removed to avoid unused type warning.
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   try {
@@ -137,17 +129,30 @@ export default async function CategoryDetailPage({ params }: Props) {
     }
 
     // Process nominees to ensure consistent data structure
-    const nominees = (rawNominees || []).map((nominee: any): Nominee => ({
-      ...nominee,
-      // Ensure we handle the Supabase array-return for joins
-      subcategories: Array.isArray(nominee.subcategories)
-        ? nominee.subcategories[0] || null
-        : nominee.subcategories || null,
-      nominee_stats: Array.isArray(nominee.nominee_stats)
-        ? nominee.nominee_stats[0] || null
-        : nominee.nominee_stats || null,
-      social_links: nominee.social_links || {}
-    }));
+    const raw = Array.isArray(rawNominees) ? rawNominees : [];
+    const nominees: Nominee[] = raw.map((item) => {
+      const nomineeRecord = item as Record<string, unknown>;
+
+      const subcategories = nomineeRecord.subcategories;
+      const nominee_stats = nomineeRecord.nominee_stats;
+
+      return {
+        id: String(nomineeRecord.id),
+        name: String(nomineeRecord.name ?? ""),
+        known_name: nomineeRecord.known_name === null ? null : String(nomineeRecord.known_name || ""),
+        bio: nomineeRecord.bio === null ? null : String(nomineeRecord.bio || ""),
+        image_url: nomineeRecord.image_url === null ? null : String(nomineeRecord.image_url || ""),
+        social_links: (nomineeRecord.social_links as Record<string, string> | null) ?? {},
+        status: String(nomineeRecord.status ?? "pending"),
+        category_id: String(nomineeRecord.category_id || ""),
+        subcategories: Array.isArray(subcategories)
+          ? (subcategories[0] as Subcategory) || null
+          : (subcategories as Subcategory) || null,
+        nominee_stats: Array.isArray(nominee_stats)
+          ? (nominee_stats[0] as NomineeStats) || null
+          : (nominee_stats as NomineeStats) || null,
+      };
+    });
 
     // Get user authentication status (optional for voting)
     const { data: { user } } = await supabase.auth.getUser();

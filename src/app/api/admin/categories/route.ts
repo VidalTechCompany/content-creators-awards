@@ -51,7 +51,7 @@ export async function GET(request: Request) {
       // Ensure counts are robust even if nominees join is empty
       nomineeCount: Array.isArray(category.nominees) ? category.nominees.length : 0,
       approvedNomineeCount: Array.isArray(category.nominees)
-        ? category.nominees.filter((n: any) => n.status === "approved").length
+        ? category.nominees.filter((n: unknown) => (n as { status?: string }).status === "approved").length
         : 0,
       nominees: undefined // Payload optimization
     })) || [];
@@ -71,7 +71,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function OPTIONS(request: Request) {
+export async function OPTIONS() {
   return new NextResponse(null, {
     status: 204,
   });
