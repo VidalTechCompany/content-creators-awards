@@ -20,6 +20,10 @@ type NomineeWithMeta = NomineeRow & {
   nominee_stats: { vote_count: number } | { vote_count: number }[] | null;
 };
 
+type CategoryWithSubs = CategoryRow & {
+  subcategories?: { id: string; name: string }[];
+};
+
 const generateSlug = (text: string) => {
   return text
     .trim()
@@ -34,12 +38,12 @@ export function NomineesManager({
   initialNominees = [],
 }: {
   role: AdminRole;
-  initialCategories?: CategoryRow[];
+  initialCategories?: CategoryWithSubs[];
   initialNominees?: NomineeWithMeta[];
 }) {
   const isSuper = role === "super_admin";
   const [view, setView] = useState<"manage" | "analysis">("manage");
-  const [categories, setCategories] = useState<CategoryRow[]>(initialCategories);
+  const [categories, setCategories] = useState<CategoryWithSubs[]>(initialCategories);
   const [nominees, setNominees] = useState<NomineeWithMeta[]>(initialNominees);
   const [filter, setFilter] = useState<NomineeStatus | "all">("all");
   const [loading, setLoading] = useState(initialNominees.length === 0);
@@ -75,7 +79,7 @@ export function NomineesManager({
     setLoading(true);
     try {
       const [cats, noms] = await Promise.all([
-        adminFetch<{ categories: CategoryRow[] }>("/api/admin/categories"),
+        adminFetch<{ categories: CategoryWithSubs[] }>("/api/admin/categories"),
         adminFetch<{ nominees: NomineeWithMeta[] }>(
           `/api/admin/nominees${filter === "all" ? "" : `?status=${filter}`}`,
         ),
@@ -157,7 +161,7 @@ export function NomineesManager({
 
   async function createSubcategory() {
     const categoryId = form.category_id || categories[0]?.id;
-    if (!categoryId || !newSubName.trim()) return;
+    if (!categoryId || !newSubName.trim() || !isSuper) return;
     setAddingSub(true);
     try {
       const res = await adminFetch<{ subcategory: { id: string } }>("/api/admin/subcategories", {
@@ -165,6 +169,7 @@ export function NomineesManager({
         body: JSON.stringify({
           category_id: categoryId,
           name: newSubName.trim(),
+          slug: generateSlug(newSubName), // Added slug generation
         }),
       });
       toast.success("Subcategory created successfully!");
@@ -172,11 +177,13 @@ export function NomineesManager({
       const newSubId = res.subcategory?.id;
       setNewSubName("");
 
-      // Refresh the local data to include the new subcategory
+      // Refresh the local data
       await load();
 
-      // Automatically select the newly created subcategory
       if (newSubId) {
+        // Small timeout ensures the DOM has updated the <select> options
+        // before we try to set the value.
+        await new Promise(resolve => setTimeout(resolve, 0));
         setForm(prev => ({ ...prev, subcategory_id: newSubId }));
       }
     } catch (err) {

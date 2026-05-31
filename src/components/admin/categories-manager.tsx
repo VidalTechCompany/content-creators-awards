@@ -88,12 +88,23 @@ export function CategoriesManager({ role }: { role: AdminRole }) {
 
   async function addSub(categoryId: string) {
     const name = subForms[categoryId];
-    if (!name?.trim() || !canEdit) return;
+
+    if (!name?.trim()) {
+      toast.error("Please enter a subcategory name");
+      return;
+    }
+
+    if (!canEdit) return;
+
     setAddingSubTo(categoryId);
     try {
       await adminFetch("/api/admin/subcategories", {
         method: "POST",
-        body: JSON.stringify({ category_id: categoryId, name: name.trim() }),
+        body: JSON.stringify({
+          category_id: categoryId,
+          name: name.trim(),
+          slug: generateSlug(name) // Ensure slug is provided if required by schema
+        }),
       });
       toast.success("Subcategory added");
       setSubForms(prev => ({ ...prev, [categoryId]: "" }));
