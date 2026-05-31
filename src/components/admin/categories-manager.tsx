@@ -37,7 +37,7 @@ export function CategoriesManager({ role }: { role: AdminRole }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await adminFetch<{ categories: CategoryWithSubs[] }>("/api/admin/categories");
+      const data = await adminFetch<{ categories: CategoryWithSubs[] }>("/api/admin/categories?includeInactive=true");
       setItems(data.categories);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to load");
@@ -76,7 +76,8 @@ export function CategoriesManager({ role }: { role: AdminRole }) {
     if (!isSuper || !confirm("Delete this category and its nominees?")) return;
     setDeletingId(id);
     try {
-      await adminFetch(`/api/admin/categories/${id}`, { method: "DELETE" });
+      // Use query parameter to match api/admin/categories/route.ts logic
+      await adminFetch(`/api/admin/categories?id=${id}`, { method: "DELETE" });
       toast.success("Deleted");
       await load();
     } catch (err) {
@@ -119,7 +120,8 @@ export function CategoriesManager({ role }: { role: AdminRole }) {
   async function deleteSub(subId: string) {
     if (!isSuper || !confirm("Delete this subcategory?")) return;
     try {
-      await adminFetch(`/api/admin/subcategories/${subId}`, { method: "DELETE" });
+      // Assuming subcategories API also uses query params for ID
+      await adminFetch(`/api/admin/subcategories?id=${subId}`, { method: "DELETE" });
       toast.success("Subcategory deleted");
       await load();
     } catch (err) {
@@ -128,32 +130,32 @@ export function CategoriesManager({ role }: { role: AdminRole }) {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 text-zinc-100">
       {isSuper ? (
-        <Card>
+        <Card className="bg-zinc-900/50 border-white/10">
           <CardHeader>
-            <CardTitle>Add category</CardTitle>
+            <CardTitle className="text-amber-50">Add Category</CardTitle>
           </CardHeader>
           <CardContent>
             <form className="grid gap-3 md:grid-cols-2" onSubmit={create}>
               <div className="space-y-2">
-                <Label>Title</Label>
-                <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required />
+                <Label className="text-zinc-400">Title</Label>
+                <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required className="bg-black/40 border-white/10" />
               </div>
               <div className="space-y-2">
-                <Label>Section label</Label>
-                <Input value={form.section} onChange={(e) => setForm({ ...form, section: e.target.value })} required />
+                <Label className="text-zinc-400">Section label</Label>
+                <Input value={form.section} onChange={(e) => setForm({ ...form, section: e.target.value })} required className="bg-black/40 border-white/10" />
               </div>
               <div className="space-y-2 md:col-span-2">
-                <Label>Description</Label>
-                <Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+                <Label className="text-zinc-400">Description</Label>
+                <Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="bg-black/40 border-white/10" />
               </div>
               <div className="space-y-2">
-                <Label>Sort order</Label>
-                <Input type="number" value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: e.target.value })} />
+                <Label className="text-zinc-400">Sort order</Label>
+                <Input type="number" value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: e.target.value })} className="bg-black/40 border-white/10" />
               </div>
               <div className="flex items-end">
-                <Button type="submit">Create</Button>
+                <Button type="submit" className="bg-amber-600 hover:bg-amber-700">Create</Button>
               </div>
             </form>
           </CardContent>
@@ -162,9 +164,9 @@ export function CategoriesManager({ role }: { role: AdminRole }) {
         <p className="text-sm text-zinc-500">Moderators can view categories; only super admins can create or delete.</p>
       )}
 
-      <Card>
+      <Card className="bg-zinc-900/50 border-white/10">
         <CardHeader>
-          <CardTitle>All categories ({items.length})</CardTitle>
+          <CardTitle className="text-amber-50">All Categories ({items.length})</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           {loading ? (
@@ -173,13 +175,13 @@ export function CategoriesManager({ role }: { role: AdminRole }) {
             items.map((c) => (
               <div
                 key={c.id}
-                className="rounded-lg border border-white/10 p-4 space-y-4"
+                className="rounded-2xl border border-white/5 p-4 space-y-4 bg-black/20"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <p className="font-medium text-amber-50">{c.title}</p>
                     <p className="text-xs text-zinc-500">
-                      {c.section} · /{c.slug} · order {c.sort_order}
+                      Section: <span className="text-amber-400/70">{c.section}</span> · /{c.slug} · order {c.sort_order}
                     </p>
                   </div>
                   {isSuper ? (

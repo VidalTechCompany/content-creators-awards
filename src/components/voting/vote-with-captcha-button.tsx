@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +12,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Turnstile } from "@marsidev/react-turnstile";
 
 function getFingerprint() {
   if (typeof window === "undefined") return "";
@@ -69,11 +70,43 @@ export function VoteWithCaptchaButton({
 }: Props) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState("");
+  const [captchaError, setCaptchaError] = useState<string | null>(null);
   const fp = useMemo(() => getFingerprint(), []);
+
+  const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+  const isDev = process.env.NODE_ENV !== "production";
+
+  const handleCaptchaSuccess = useCallback((token: string) => {
+    setCaptchaToken(token);
+    setCaptchaError(null);
+  }, []);
+
+  const handleCaptchaExpire = useCallback(() => {
+    setCaptchaToken("");
+    setCaptchaError("Captcha expired, please complete it again.");
+  }, []);
+
+  const handleCaptchaError = useCallback(() => {
+    setCaptchaToken("");
+    setCaptchaError("Captcha failed to load or verify. Please refresh the page.");
+  }, []);
+
+  const handleOpenChange = useCallback((value: boolean) => {
+    setOpen(value);
+    if (!value) {
+      setCaptchaToken("");
+      setCaptchaError(null);
+    }
+  }, []);
 
   async function submit() {
     setLoading(true);
     try {
+      const captchaTokenValue = captchaToken || (isDev ? "dev-bypass-placeholder" : "");
+      if (!captchaTokenValue) {
+        throw new Error("Please complete the captcha challenge before voting.");
+      }
       const res = await fetch("/api/vote", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -81,6 +114,7 @@ export function VoteWithCaptchaButton({
           categoryId,
           nomineeId,
           fingerprint: fp,
+          captchaToken: captchaTokenValue,
         }),
       });
       const body = await res.json().catch(() => ({}));
@@ -111,7 +145,7 @@ export function VoteWithCaptchaButton({
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         <Button className="w-full">Vote</Button>
       </DialogTrigger>
@@ -122,11 +156,27 @@ export function VoteWithCaptchaButton({
             You are voting for <span className="text-amber-200">{nomineeName}</span>. This action is protected by audit logging.
           </DialogDescription>
         </DialogHeader>
+        <div className="mt-4">
+          {siteKey ? (
+            <Turnstile
+              siteKey={siteKey}
+              onSuccess={handleCaptchaSuccess}
+              onExpire={handleCaptchaExpire}
+              onError={handleCaptchaError}
+              options={{ theme: "dark", size: "compact", action: "vote" }}
+            />
+          ) : (
+            <p className="text-sm text-rose-300">
+              Captcha is not configured. If you are in development, voting will still work using a dev bypass.
+            </p>
+          )}
+          {captchaError ? <p className="mt-2 text-sm text-rose-300">{captchaError}</p> : null}
+        </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={loading}>
+          <Button onClick={submit} disabled={loading || (!captchaToken && !isDev)}>
             {loading ? "Submitting…" : "Confirm vote"}
           </Button>
         </DialogFooter>

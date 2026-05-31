@@ -39,7 +39,7 @@ export async function GET(request: Request) {
 
   let query = ctx.supabase
     .from("nominees")
-    .select("*, categories(title, slug), nominee_stats(vote_count)")
+    .select("*, categories(title, slug), subcategories(name), nominee_stats(vote_count)")
     .order("created_at", { ascending: false });
 
   if (status && ["pending", "approved", "rejected"].includes(status)) {

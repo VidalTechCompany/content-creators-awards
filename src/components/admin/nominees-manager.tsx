@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState, useMemo } from "react";
 import { toast } from "sonner";
-import Image from "next/image"; // Import the Image component
+import { ImageWithFallback } from "@/components/ui/image-with-fallback";
 import { adminFetch } from "@/lib/admin/fetch";
 import type { AdminRole, CategoryRow, NomineeRow, NomineeStatus } from "@/types/database";
 import { Button } from "@/components/ui/button";
@@ -42,6 +42,7 @@ export function NomineesManager({
   initialNominees?: NomineeWithMeta[];
 }) {
   const isSuper = role === "super_admin";
+  const canEdit = role === "super_admin" || role === "moderator";
   const [view, setView] = useState<"manage" | "analysis">("manage");
   const [categories, setCategories] = useState<CategoryWithSubs[]>(initialCategories);
   const [nominees, setNominees] = useState<NomineeWithMeta[]>(initialNominees);
@@ -84,14 +85,21 @@ export function NomineesManager({
           `/api/admin/nominees${filter === "all" ? "" : `?status=${filter}`}`,
         ),
       ]);
-      setCategories(cats.categories);
-      setNominees(noms.nominees);
+
+      // Robustness: Ensure we don't crash if adminFetch returns an empty object on error
+      const categoriesList = cats?.categories ?? [];
+      const nomineesList = noms?.nominees ?? [];
+
+      setCategories(categoriesList);
+      setNominees(nomineesList);
 
       setForm((f) => {
-        const nextCatId = f.category_id || cats.categories[0]?.id || "";
-        const selected = cats.categories.find(c => c.id === nextCatId);
-        // Sync subcategory if it was empty but we now have options
-        const nextSubId = f.subcategory_id || selected?.subcategories?.[0]?.id || "";
+        const nextCatId = f.category_id || categoriesList[0]?.id || "";
+        const selected = categoriesList.find(c => c.id === nextCatId);
+
+        // Handle cases where subcategories might be null/missing
+        const subs = Array.isArray(selected?.subcategories) ? selected.subcategories : [];
+        const nextSubId = f.subcategory_id || subs[0]?.id || "";
 
         return { ...f, category_id: nextCatId, subcategory_id: nextSubId };
       });
@@ -153,7 +161,11 @@ export function NomineesManager({
 
   async function createSubcategory() {
     const categoryId = form.category_id || categories[0]?.id;
-    if (!categoryId || !newSubName.trim() || !isSuper) return;
+    if (!categoryId || !newSubName.trim() || !canEdit) {
+      if (!categoryId) toast.error("Please select a category first.");
+      else if (!newSubName.trim()) toast.error("Please enter a subcategory name.");
+      return;
+    }
     setAddingSub(true);
     try {
       const res = await adminFetch<{ subcategory: { id: string } }>("/api/admin/subcategories", {
@@ -161,7 +173,6 @@ export function NomineesManager({
         body: JSON.stringify({
           category_id: categoryId,
           name: newSubName.trim(),
-          slug: generateSlug(newSubName), // Added slug generation
         }),
       });
       toast.success("Subcategory created successfully!");
@@ -189,9 +200,13 @@ export function NomineesManager({
     if (!editingSubId || !editingSubName.trim()) return;
     setUpdatingSub(true);
     try {
-      await adminFetch(`/api/admin/subcategories/${editingSubId}`, {
+      // Send ID in body to the root subcategories endpoint
+      await adminFetch(`/api/admin/subcategories`, {
         method: "PATCH",
-        body: JSON.stringify({ name: editingSubName.trim() }),
+        body: JSON.stringify({
+          id: editingSubId,
+          name: editingSubName.trim()
+        }),
       });
       toast.success("Subcategory updated");
       setEditingSubId(null);
@@ -210,7 +225,8 @@ export function NomineesManager({
     )
       return;
     try {
-      await adminFetch(`/api/admin/subcategories/${id}`, { method: "DELETE" });
+      // Use query parameter for DELETE
+      await adminFetch(`/api/admin/subcategories?id=${id}`, { method: "DELETE" });
       toast.success("Subcategory deleted");
       if (form.subcategory_id === id) {
         setForm((prev) => ({ ...prev, subcategory_id: "" }));
@@ -248,9 +264,10 @@ export function NomineesManager({
     setUpdatingCat(true);
     try {
       const cat = categories.find(c => c.id === editingCatId);
-      await adminFetch(`/api/admin/categories/${editingCatId}`, {
+      await adminFetch(`/api/admin/categories`, {
         method: "PATCH",
         body: JSON.stringify({
+          id: editingCatId,
           title: editingCatTitle.trim(),
           slug: generateSlug(editingCatTitle),
           section: cat?.section || "General",
@@ -269,7 +286,7 @@ export function NomineesManager({
   async function removeCategory(id: string) {
     if (!isSuper || !confirm("Delete this category permanently? This will fail if it contains nominees or subcategories.")) return;
     try {
-      await adminFetch(`/api/admin/categories/${id}`, { method: "DELETE" });
+      await adminFetch(`/api/admin/categories?id=${id}`, { method: "DELETE" });
       toast.success("Category deleted");
       // Reset selection if the deleted category was selected
       if (form.category_id === id) {
@@ -301,8 +318,20 @@ export function NomineesManager({
       body.set("file", file);
       body.set("nomineeId", nomineeId);
       const res = await fetch("/api/admin/upload", { method: "POST", body });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Upload failed");
+
+      let data;
+      try {
+        const text = await res.text();
+        data = text ? JSON.parse(text) : {};
+      } catch (e) {
+        data = {};
+      }
+
+      if (!res.ok) {
+        const errorMessage = data.error || data.message || data.details || `Error ${res.status}: ${res.statusText}`;
+        throw new Error(typeof errorMessage === 'string' ? errorMessage : JSON.stringify(errorMessage));
+      }
+
       toast.success("Image uploaded");
       if (shouldReload) await load();
     } catch (err) {
@@ -339,7 +368,7 @@ export function NomineesManager({
       const catNominees = approved.filter((n) => n.category_id === cat.id);
 
       const findTopNominees = (list: NomineeWithMeta[]) => {
-        if (list.length === 0) return [];
+        if (!list || list.length === 0) return [];
         const maxVotes = Math.max(...list.map(voteCount));
         // Filter for all nominees matching the max vote count to detect ties
         return list.filter((n) => voteCount(n) === maxVotes);
@@ -718,16 +747,21 @@ export function NomineesManager({
                       <Badge variant={n.status === "approved" ? "default" : "secondary"}>{n.status}</Badge>
                     </div>
                     <p className="text-xs text-zinc-500">
-                      {n.categories?.title}
-                      {n.subcategories?.name ? ` · ${n.subcategories.name}` : ""} · <span suppressHydrationWarning>{voteCount(n)}</span> votes
+                      {/* Safely handle Category object or array from join */}
+                      {(Array.isArray(n.categories) ? n.categories[0] : n.categories)?.title}
+                      {/* Safely handle Subcategory object or array from join */}
+                      {(Array.isArray(n.subcategories) ? n.subcategories[0] : n.subcategories)?.name
+                        ? ` · ${(Array.isArray(n.subcategories) ? n.subcategories[0] : n.subcategories).name}`
+                        : ""}
+                      · <span suppressHydrationWarning>{voteCount(n)}</span> votes
                     </p>
                     {n.image_url ? (
-                      <Image
+                      <ImageWithFallback
                         src={n.image_url}
-                        alt={n.name || "Nominee image"} // Provide meaningful alt text
-                        width={48} // Corresponds to h-12 (48px)
-                        height={48} // Corresponds to w-12 (48px)
-                        className="mt-2 rounded-md object-cover" // Keep other styles, remove h-12 w-12
+                        alt={n.name || "Nominee image"}
+                        width={48}
+                        height={48}
+                        className="mt-2 rounded-md object-cover"
                         unoptimized
                       />
                     ) : null}

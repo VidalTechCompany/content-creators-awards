@@ -1,6 +1,8 @@
 export async function adminFetch<T>(url: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers ?? undefined);
-  headers.set("content-type", "application/json");
+  if (init?.body != null && !headers.has("content-type")) {
+    headers.set("content-type", "application/json");
+  }
 
   const res = await fetch(url, {
     ...init,

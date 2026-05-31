@@ -26,24 +26,43 @@ async function verifyTurnstile(token: string, ip?: string) {
     return false;
   }
 
-  if (!token) {
-    console.error("[VOTE_API] CAPTCHA Error: Missing token from client.");
+  if (!token || token === "dev-bypass-placeholder") {
+    // Allow placeholder only in dev mode
+    if (process.env.NODE_ENV !== "production" && token === "dev-bypass-placeholder") {
+      console.warn("[VOTE_API] CAPTCHA: Dev bypass placeholder accepted.");
+      return true;
+    }
+    console.error("[VOTE_API] CAPTCHA Error: Missing or invalid token from client.");
     return false;
   }
 
   try {
+    const formData = new URLSearchParams();
+    formData.append("secret", secret);
+    formData.append("response", token);
+    if (ip) formData.append("remoteip", ip);
+
     const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        secret,
-        response: token,
-        ...(ip && { remoteip: ip }),
-      }).toString(),
+      body: formData.toString(),
       cache: 'no-store',
     });
 
-    const data = await res.json();
+    let data;
+    try {
+      const text = await res.text();
+      data = text ? JSON.parse(text) : {};
+    } catch (e) {
+      console.error("[VOTE_API] Failed to parse Turnstile response:", e);
+      data = {};
+    }
+
+    if (!res.ok) {
+      console.error(`[VOTE_API] Turnstile siteverify failed: ${data.error || data.message}`);
+      return false;
+    }
+
     if (data.success) return true;
 
     console.error(`[VOTE_API] CAPTCHA failed for ${ip}:`, data["error-codes"] || "Unknown error");
@@ -55,89 +74,104 @@ async function verifyTurnstile(token: string, ip?: string) {
 }
 
 export async function POST(request: Request) {
+  // 1. Origin check
   try {
-    assertTrustedOrigin(request);
+    await assertTrustedOrigin(request);
   } catch {
     const origin = request.headers.get("origin") || request.headers.get("referer") || "missing";
     return NextResponse.json({ error: `Invalid origin: ${origin}` }, { status: 403 });
   }
 
+  // 2. Rate limiting by IP
   const ip = clientIp(request) ?? "0.0.0.0";
-  if (!rateLimit(`vote:${ip}`, 25, 60_000)) {
-    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+  if (!(await rateLimit(`vote:${ip}`, 25, 60_000))) {
+    return NextResponse.json({ error: "Too many requests. Please try again later." }, { status: 429 });
   }
 
+  // 3. Parse JSON safely
   let json: unknown;
   try {
-    json = await request.json();
+    const text = await request.text();
+    json = text ? JSON.parse(text) : {};
   } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid JSON payload. Please check your request format." },
+      { status: 400 }
+    );
   }
 
-  // Pro-tip: Our 'verifyTurnstile' function has a dev-mode bypass, but the 
-  // Zod schema validation happens first and will fail if 'captchaToken' is missing.
-  // We inject a placeholder in development if the token is missing so the 
-  // bypass logic can actually be reached.
-  const isDevBypass = process.env.NODE_ENV !== "production" && !process.env.TURNSTILE_SECRET_KEY;
+  // 4. Log incoming request for debugging (remove in production)
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[VOTE_API] Received payload:", JSON.stringify(json, null, 2));
+  }
 
+  // 5. Handle dev bypass for captcha
+  const isDevBypass = process.env.NODE_ENV !== "production" && !process.env.TURNSTILE_SECRET_KEY;
   const payload = (isDevBypass && typeof json === 'object' && json !== null && !('captchaToken' in json))
     ? { ...json, captchaToken: "dev-bypass-placeholder" }
     : json;
 
+  // 6. Validate with Zod
   const parsed = voteRequestSchema.safeParse(payload);
 
   if (!parsed.success) {
-    // Professional logging for production: logs exactly what was received vs what was expected
     console.error(
-      `[VOTE_API] 400 Bad Request - Validation Failed for IP: ${ip}\n` +
-      `Payload Received: ${JSON.stringify(json)}\n` +
-      `Zod Flattened Errors: ${JSON.stringify(parsed.error.flatten())}`
+      `[VOTE_API] Validation Failed for IP: ${ip}\n` +
+      `Payload: ${JSON.stringify(json)}\n` +
+      `Errors: ${JSON.stringify(parsed.error.flatten())}`
     );
-    return NextResponse.json({
-      error: "Validation failed",
-      details: parsed.error.flatten()
-    }, { status: 400 });
+
+    return NextResponse.json(
+      {
+        error: "Validation failed",
+        details: parsed.error.flatten(),
+        message: "Please check your input: categoryId, nomineeId, fingerprint, and captchaToken are required"
+      },
+      { status: 400 }
+    );
   }
 
   const { categoryId, nomineeId, fingerprint, captchaToken } = parsed.data;
 
-  // 1. CAPTCHA Protection
-  // Verifies the user is human before proceeding with heavy DB operations
+  // 7. CAPTCHA verification
   const isHuman = await verifyTurnstile(captchaToken, ip);
   if (!isHuman) {
-    console.error(`[VOTE_API] 403 Forbidden: CAPTCHA verification failed for IP ${ip}`);
-    return NextResponse.json({ error: "CAPTCHA verification failed" }, { status: 403 });
+    console.error(`[VOTE_API] CAPTCHA verification failed for IP ${ip}`);
+    return NextResponse.json(
+      { error: "CAPTCHA verification failed. Please refresh and try again." },
+      { status: 403 }
+    );
   }
 
+  // 8. Initialize Supabase clients
   const supabase = await createClient();
+  const admin = createServiceClient();
 
-  // Support for manual Authorization header as an alternative to cookies
+  // 9. Authentication (optional - allows guest voting)
   const authHeader = request.headers.get("Authorization");
   const jwtToken = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : undefined;
-
-  // Authentication is now optional to allow "direct" voting from shared links
   const { data: authData } = await supabase.auth.getUser(jwtToken);
   const user = authData?.user;
   const userId = user?.id;
-
   const ua = request.headers.get("user-agent") ?? "";
 
-  const admin = createServiceClient();
-
-  // 2. Global System Checks (Deadline and Toggle)
+  // 10. Global system checks
   const { data: settings } = await admin.from("site_settings").select("*").eq("id", 1).maybeSingle();
+
   if (settings && settings.voting_open === false) {
-    console.warn("[VOTE_API] 403 Forbidden: Voting is currently toggled OFF in settings.");
-    return NextResponse.json({ error: "Voting is closed" }, { status: 403 });
+    console.warn("[VOTE_API] Voting is closed");
+    return NextResponse.json({ error: "Voting is currently closed" }, { status: 403 });
   }
+
   if (settings?.voting_deadline) {
     const deadline = new Date(settings.voting_deadline);
     if (deadline.getTime() < Date.now()) {
-      console.warn("[VOTE_API] 403 Forbidden: Voting deadline has passed.");
+      console.warn("[VOTE_API] Voting deadline passed");
       return NextResponse.json({ error: "Voting deadline has passed" }, { status: 403 });
     }
   }
 
+  // 11. Validate nominee exists and is approved
   const { data: nominee, error: nomErr } = await admin
     .from("nominees")
     .select("id, category_id, status")
@@ -145,11 +179,13 @@ export async function POST(request: Request) {
     .maybeSingle();
 
   if (nomErr || !nominee || nominee.status !== "approved" || nominee.category_id !== categoryId) {
-    return NextResponse.json({ error: "Invalid nominee or category" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid nominee or category. Please select a valid option." },
+      { status: 400 }
+    );
   }
 
-  // 3. Device Fingerprinting check 
-  // Prevents "account farming" where one person uses 10 emails on the same laptop.
+  // 12. Device fingerprint check (prevent multiple votes from same device)
   const { count: fingerprintCount } = await admin
     .from("votes")
     .select("*", { count: "exact", head: true })
@@ -157,24 +193,32 @@ export async function POST(request: Request) {
     .eq("fingerprint", fingerprint.trim().slice(0, 512));
 
   if ((fingerprintCount ?? 0) > 0) {
-    return NextResponse.json({ error: "This device has already been used to vote in this category" }, { status: 409 });
+    return NextResponse.json(
+      { error: "This device has already voted in this category" },
+      { status: 409 }
+    );
   }
 
-  // Cooldown check only applies to registered users to prevent botting via session switching. 
-  // Guests are already throttled by IP and Fingerprint.
+  // 13. Cooldown check for registered users
   if (userId) {
-    const { data: profile } = await admin.from("profiles").select("last_vote_at").eq("id", userId).maybeSingle();
+    const { data: profile } = await admin
+      .from("profiles")
+      .select("last_vote_at")
+      .eq("id", userId)
+      .maybeSingle();
+
     if (profile?.last_vote_at) {
       const delta = (Date.now() - new Date(profile.last_vote_at).getTime()) / 1000;
       if (delta < VOTE_COOLDOWN_SEC) {
         return NextResponse.json(
-          { error: `Please wait ${Math.ceil(VOTE_COOLDOWN_SEC - delta)}s between votes` },
-          { status: 429 },
+          { error: `Please wait ${Math.ceil(VOTE_COOLDOWN_SEC - delta)} seconds between votes` },
+          { status: 429 }
         );
       }
     }
   }
 
+  // 14. IP burst detection (monitoring only, not blocking)
   const { count: ipBurst } = await admin
     .from("votes")
     .select("*", { count: "exact", head: true })
@@ -182,41 +226,63 @@ export async function POST(request: Request) {
     .gte("created_at", new Date(Date.now() - 60 * 60 * 1000).toISOString());
 
   if ((ipBurst ?? 0) > 40) {
-    await admin.from("suspicious_activity").insert({
-      user_id: userId ?? null,
-      reason: "high_ip_volume",
-      meta: { ip, count: ipBurst },
-    });
+    try {
+      await admin.from("suspicious_activity").insert({
+        user_id: userId ?? null,
+        reason: "high_ip_volume",
+        meta: { ip, count: ipBurst, timestamp: new Date().toISOString() },
+      });
+    } catch (err) {
+      console.error("Failed to log suspicious activity:", err);
+    }
   }
 
+  // 15. Record the vote
   const { error: voteError } = await admin.from("votes").insert({
-    user_id: userId ?? null, // Will be NULL for guest voters
+    user_id: userId ?? null,
     category_id: categoryId,
     nominee_id: nomineeId,
     ip_address: ip,
     user_agent: ua.slice(0, 512),
     fingerprint: fingerprint.slice(0, 512),
+    created_at: new Date().toISOString(),
   });
 
   if (voteError) {
-    if (voteError.code === "23505") {
-      return NextResponse.json({ error: "You have already voted in this category" }, { status: 409 });
+    if (voteError.code === "23505") { // Unique violation
+      return NextResponse.json(
+        { error: "You have already voted in this category" },
+        { status: 409 }
+      );
     }
-    console.error(voteError);
-    return NextResponse.json({ error: "Could not record vote" }, { status: 500 });
+    console.error("Vote insert error:", voteError);
+    return NextResponse.json(
+      { error: "Failed to record vote. Please try again." },
+      { status: 500 }
+    );
   }
 
+  // 16. Update user's last vote timestamp
   if (userId) {
-    await admin.from("profiles").update({ last_vote_at: new Date().toISOString() }).eq("id", userId);
+    await admin
+      .from("profiles")
+      .update({ last_vote_at: new Date().toISOString() })
+      .eq("id", userId);
   }
 
+  // 17. Log to audit trail
   await admin.from("audit_logs").insert({
-    actor_id: userId ?? '00000000-0000-0000-0000-000000000000', // Use a zero-UUID for guests
+    actor_id: userId ?? '00000000-0000-0000-0000-000000000000',
     action: "vote_cast",
     entity: "votes",
     entity_id: nomineeId,
-    meta: { categoryId },
+    meta: { categoryId, ip, fingerprint: fingerprint.slice(0, 32) },
   });
 
-  return NextResponse.json({ ok: true });
+  // 18. Return success
+  return NextResponse.json({
+    success: true,
+    message: "Vote recorded successfully!",
+    vote: { categoryId, nomineeId }
+  });
 }

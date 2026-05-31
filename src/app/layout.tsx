@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Cormorant_Garamond, DM_Sans } from "next/font/google";
-import "./globals.css";
+import "@/app/globals.css";
 import { AppProviders } from "@/components/providers/app-providers";
 import { SessionProvider } from "@/components/providers/session-provider";
 import { SiteHeader } from "@/components/layout/site-header";
@@ -9,6 +9,7 @@ import { defaultMetadata } from "@/lib/seo";
 import { createClientOrNull } from "@/lib/supabase/server";
 import { getAdminRole } from "@/lib/admin/server";
 import { type UserResponse } from "@supabase/supabase-js";
+import TurnstileRoot from "@/components/turnstile/turnstile-root";
 
 const display = Cormorant_Garamond({
   subsets: ["latin"],
@@ -48,6 +49,7 @@ export default async function RootLayout({
       <body
         className={`${display.variable} ${sans.variable} min-h-screen bg-gradient-to-b from-black via-zinc-950 to-black font-sans text-zinc-100 antialiased`}
       >
+        <TurnstileRoot />
         <AppProviders>
           <SessionProvider email={email} isAdmin={isAdmin} adminRole={adminRole}>
             <div className="flex min-h-screen flex-col">

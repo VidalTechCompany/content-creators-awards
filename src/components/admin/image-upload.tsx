@@ -2,7 +2,7 @@
 
 import { useState, useRef } from "react";
 import { Upload, Loader2 } from "lucide-react";
-import Image from "next/image";
+import { ImageWithFallback } from "@/components/ui/image-with-fallback";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -38,8 +38,17 @@ export function ImageUpload({ nomineeId, currentImageUrl, onUploadComplete }: Im
                 body: formData,
             });
 
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || "Upload failed");
+            let data;
+            try {
+                data = await res.json();
+            } catch (e) {
+                data = {};
+            }
+
+            if (!res.ok) {
+                const errorMessage = data.error || data.message || `Error ${res.status}: ${res.statusText}`;
+                throw new Error(typeof errorMessage === 'string' ? errorMessage : JSON.stringify(errorMessage));
+            }
 
             setPreview(data.url);
             onUploadComplete?.(data.url);
@@ -62,11 +71,12 @@ export function ImageUpload({ nomineeId, currentImageUrl, onUploadComplete }: Im
             >
                 {preview ? (
                     <div className="relative h-full w-full">
-                        <Image
+                        <ImageWithFallback
                             src={preview}
                             alt="Preview"
                             fill
                             className="rounded-2xl object-cover"
+                            fallbackSrc="/placeholder-nominee.jpg"
                             unoptimized
                         />
                         <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity hover:opacity-100">
