@@ -13,16 +13,24 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { id } = await params;
   const supabase = await createClientOrNull();
   if (!supabase) return { title: "Nominee" };
+
   const { data } = await supabase.from("nominees").select("name, bio, image_url, categories(title, slug)").eq("id", id).maybeSingle();
 
   const site = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+
+  if (!process.env.NEXT_PUBLIC_SITE_URL && process.env.NODE_ENV === "production") {
+    console.warn("[PRODUCTION WARNING] NEXT_PUBLIC_SITE_URL is not set. Social sharing images may fail.");
+  }
+
   const nomineeUrl = `${site}/nominees/${id}`;
   const title = data?.name ?? "Nominee";
-  const description = data?.bio ?? "Vote for this nominee in the Content Creators Awards";
-  const catData = data?.categories;
-  const categoryTitle = Array.isArray(catData)
-    ? (catData[0] as unknown as { title: string })?.title
-    : (catData as unknown as { title: string })?.title;
+  const description = data?.bio ? data.bio.trim().substring(0, 157) + "..." : "Vote for this nominee in the Content Creators Awards";
+
+  // Safer category extraction
+  const rawCat = data?.categories;
+  const category = Array.isArray(rawCat) ? rawCat[0] : rawCat;
+  const categoryTitle = (category as { title?: string })?.title;
+
   const imageUrl = data?.image_url || `${site}/og-image.png`;
 
   return {
@@ -33,20 +41,20 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       url: nomineeUrl,
       title: `${title} - Content Creators Awards`,
       description: `Vote for ${title}${categoryTitle ? ` in ${categoryTitle}` : ''} at the Content Creators Awards!`,
-      images: [
+      images: imageUrl ? [
         {
           url: imageUrl,
           width: 1200,
           height: 630,
           alt: title,
         },
-      ],
+      ] : [],
     },
     twitter: {
       card: "summary_large_image",
       title: `Vote for ${title}`,
       description: `Support ${title} in the Content Creators Awards`,
-      images: [imageUrl],
+      images: imageUrl ? [imageUrl] : [],
     },
   };
 }
@@ -58,29 +66,52 @@ export default async function NomineeProfilePage({ params }: Props) {
   const supabase = await createClientOrNull();
   if (!supabase) notFound();
 
-  const { data: nominee } = await supabase
-    .from("nominees")
-    .select("*, categories (id, slug, title), subcategories (name), nominee_stats(vote_count)")
-    .eq("id", id)
-    .eq("status", "approved")
-    .maybeSingle();
+  // Fetch nominee and site settings in parallel for speed
+  const [nomineeRes, settingsRes] = await Promise.all([
+    supabase
+      .from("nominees")
+      .select("*, categories (id, slug, title), subcategories (name), nominee_stats(vote_count)")
+      .eq("id", id)
+      .eq("status", "approved")
+      .maybeSingle(),
+    supabase
+      .from("site_settings")
+      .select("voting_open, voting_deadline")
+      .eq("id", 1)
+      .maybeSingle()
+  ]);
+
+  const nominee = nomineeRes.data;
+  const settings = settingsRes.data;
 
   if (!nominee) notFound();
 
-  const rawCat = nominee.categories;
-  const category = (Array.isArray(rawCat) ? rawCat[0] : rawCat) as { slug: string; title: string; id: string };
+  // Safe data extraction for production stability
+  const category = (Array.isArray(nominee.categories) ? nominee.categories[0] : nominee.categories) as { slug: string; title: string; id: string } | null;
+
+  if (!category) {
+    console.error(`[PRODUCTION ERROR] Nominee ${id} is missing an associated category.`);
+    notFound();
+  }
+
   const rawSub = nominee.subcategories;
   const subcategory = (Array.isArray(rawSub) ? rawSub[0] : rawSub) as { name: string } | null;
   const rawStats = nominee.nominee_stats;
   const initialVotes = Array.isArray(rawStats) ? rawStats[0]?.vote_count ?? 0 : (rawStats as { vote_count: number } | null)?.vote_count ?? 0;
   const socials = (nominee.social_links as Record<string, string>) ?? {};
 
-  await supabase.auth.getUser();
+  // Determine if voting is active based on server-side settings
+  const isDeadlinePassed = settings?.voting_deadline
+    ? new Date(settings.voting_deadline).getTime() < Date.now()
+    : false;
 
-  // Allow voting by default. The backend API (/api/vote) will now 
-  // handle security via IP/Fingerprint instead of user session.
-  const canVote = true;
-  const verifyNote: string | null = null;
+  const canVote = settings?.voting_open !== false && !isDeadlinePassed;
+
+  const verifyNote = isDeadlinePassed
+    ? "Voting has ended for this year."
+    : settings?.voting_open === false
+      ? "Voting is temporarily paused."
+      : null;
 
   return (
     <div className="mx-auto max-w-4xl py-12">
