@@ -124,6 +124,7 @@ export default async function NomineeProfilePage({ params }: Props) {
                   src={nominee.image_url}
                   alt={nominee.name}
                   fill
+                  sizes="(max-width: 768px) 100vw, 50vw"
                   className="object-cover"
                   unoptimized
                 />
