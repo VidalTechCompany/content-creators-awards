@@ -74,9 +74,25 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const parsed = voteRequestSchema.safeParse(json);
+  // Pro-tip: Our 'verifyTurnstile' function has a dev-mode bypass, but the 
+  // Zod schema validation happens first and will fail if 'captchaToken' is missing.
+  // We inject a placeholder in development if the token is missing so the 
+  // bypass logic can actually be reached.
+  const isDevBypass = process.env.NODE_ENV !== "production" && !process.env.TURNSTILE_SECRET_KEY;
+
+  const payload = (isDevBypass && typeof json === 'object' && json !== null && !('captchaToken' in json))
+    ? { ...json, captchaToken: "dev-bypass-placeholder" }
+    : json;
+
+  const parsed = voteRequestSchema.safeParse(payload);
+
   if (!parsed.success) {
-    console.error("[VOTE_API] Request validation failed:", parsed.error.format());
+    const receivedKeys = typeof json === 'object' && json !== null ? Object.keys(json) : 'not_an_object';
+    console.error(
+      "[VOTE_API] 400 Bad Request - Validation Failed.",
+      "Received keys:", receivedKeys,
+      "Errors:", JSON.stringify(parsed.error.flatten())
+    );
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
