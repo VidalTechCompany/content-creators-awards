@@ -13,19 +13,28 @@ export function ImageWithFallback({
     fallbackSrc = '/placeholder-nominee.jpg',
     ...props
 }: ImageWithFallbackProps) {
-    const [imgSrc, setImgSrc] = useState(src);
+    const [error, setError] = useState(false);
+    const [currentSrc, setCurrentSrc] = useState(src);
 
-    // Sync internal state if the src prop changes from the parent
     useEffect(() => {
-        setImgSrc(src);
+        setCurrentSrc(src);
+        setError(false);
     }, [src]);
+
+    const handleError = () => {
+        if (!error) {
+            setError(true);
+            setCurrentSrc(fallbackSrc);
+        }
+    };
 
     return (
         <Image
             {...props}
-            src={imgSrc}
+            src={currentSrc}
             alt={alt}
-            onError={() => setImgSrc(fallbackSrc)}
+            onError={handleError}
+            unoptimized={props.unoptimized || currentSrc === fallbackSrc}
         />
     );
 }

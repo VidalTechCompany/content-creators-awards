@@ -168,11 +168,12 @@ export function NomineesManager({
     }
     setAddingSub(true);
     try {
-      const res = await adminFetch<{ subcategory: { id: string } }>("/api/admin/subcategories", {
+      const res = await adminFetch<{ subcategory?: { id: string } }>("/api/admin/subcategories", {
         method: "POST",
         body: JSON.stringify({
           category_id: categoryId,
           name: newSubName.trim(),
+          slug: generateSlug(newSubName),
         }),
       });
       toast.success("Subcategory created successfully!");
@@ -241,7 +242,7 @@ export function NomineesManager({
     if (!newCatTitle.trim()) return;
     setAddingCat(true);
     try {
-      await adminFetch("/api/admin/categories", {
+      const res = await adminFetch<{ category?: { id: string } }>("/api/admin/categories", {
         method: "POST",
         body: JSON.stringify({
           title: newCatTitle.trim(),
@@ -249,7 +250,28 @@ export function NomineesManager({
           section: "General",
         }),
       });
-      toast.success("Category created successfully!");
+
+      const categoryId = res?.category?.id;
+
+      // Pro Implementation: Specialized logic for TikTok Dancers
+      if (categoryId && newCatTitle.toLowerCase().includes('tiktok dancers')) {
+        const defaultSubs = ['Best Male', 'Best Female'];
+        const subRequests = defaultSubs.map(subName =>
+          adminFetch('/api/admin/subcategories', {
+            method: 'POST',
+            body: JSON.stringify({
+              category_id: categoryId,
+              name: subName.trim(),
+              slug: generateSlug(subName),
+            }),
+          })
+        );
+        await Promise.all(subRequests);
+        toast.success("Category created with TikTok Dancers subcategories");
+      } else {
+        toast.success("Category created successfully!");
+      }
+
       setNewCatTitle("");
       await load();
     } catch (err) {

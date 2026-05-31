@@ -54,7 +54,7 @@ export function CategoriesManager({ role }: { role: AdminRole }) {
     e.preventDefault();
     if (!isSuper) return;
     try {
-      await adminFetch("/api/admin/categories", {
+      const res = await adminFetch<{ category?: { id: string } }>("/api/admin/categories", {
         method: "POST",
         body: JSON.stringify({
           title: form.title,
@@ -64,7 +64,27 @@ export function CategoriesManager({ role }: { role: AdminRole }) {
           sort_order: Number(form.sort_order) || 0,
         }),
       });
-      toast.success("Category created");
+
+      const categoryId = res?.category?.id;
+
+      if (categoryId && form.title.toLowerCase().includes('tiktok dancers')) {
+        const defaultSubs = ['Best Male', 'Best Female'];
+        const subRequests = defaultSubs.map(subName =>
+          adminFetch('/api/admin/subcategories', {
+            method: 'POST',
+            body: JSON.stringify({
+              category_id: categoryId,
+              name: subName.trim(),
+              slug: generateSlug(subName),
+            }),
+          })
+        );
+        await Promise.all(subRequests);
+        toast.success("Category created with TikTok Dancers subcategories");
+      } else {
+        toast.success("Category created");
+      }
+
       setForm({ title: "", section: "", description: "", sort_order: "0" });
       void load();
     } catch (err) {
