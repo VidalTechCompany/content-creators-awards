@@ -120,6 +120,41 @@ join auth.users u on a.user_id = u.id;
 - Check RLS policies in Supabase are correct
 - Ensure the user's session is active
 
+## Resetting Votes (Production/Testing)
+
+If you need to clear all votes (e.g., after testing in production) without deleting nominees, use the following SQL in the Supabase SQL Editor.
+
+### Reset Script
+
+```sql
+BEGIN;
+  -- 1. Remove all records from the votes table
+  TRUNCATE TABLE public.votes CASCADE;
+
+  -- 2. Reset the aggregate counters in nominee_stats
+  UPDATE public.nominee_stats 
+  SET vote_count = 0;
+
+  -- 3. Clear cooldowns so testers/users can vote again immediately
+  UPDATE public.profiles 
+  SET last_vote_at = NULL;
+
+  -- 4. (Optional) Log the reset action
+  INSERT INTO public.audit_logs (action, details)
+  VALUES ('RESET_ALL_VOTES', 'Admin cleared all votes to zero');
+COMMIT;
+```
+
+> **Warning:** This action is destructive and cannot be undone. Always backup your data or export the `votes` table if you need to keep a record of testing results before clearing.
+
+### Implementation in UI
+
+To allow admins to do this from the web dashboard:
+1. Create a PostgreSQL function in Supabase wrapping the script above.
+2. Create a Next.js Server Action that checks for `super_admin` role in `public.admins`.
+3. Use the Supabase Service Role key to bypass RLS for this operation.
+4. Ensure a confirmation dialog is present in the UI to prevent accidental resets.
+
 ## Next Steps
 
 1. Build out admin dashboard features
