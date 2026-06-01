@@ -32,6 +32,23 @@ const generateSlug = (text: string) => {
     .replace(/[^a-z0-9-]/g, "");
 };
 
+const shouldCreateDanceGenderSubcategories = (title: string) => {
+  const normalized = title.trim().toLowerCase();
+  return (
+    normalized.includes('tiktok dancers') ||
+    normalized.includes('best dancer') ||
+    normalized.includes('dancer creator') ||
+    normalized.includes('dancer creators')
+  );
+};
+
+const hasDanceGenderSubcategories = (category?: CategoryWithSubs) => {
+  return !!category?.subcategories?.some((sub) =>
+    sub.name.toLowerCase().includes('best male') ||
+    sub.name.toLowerCase().includes('best female')
+  );
+};
+
 export function NomineesManager({
   role,
   initialCategories = [],
@@ -50,12 +67,14 @@ export function NomineesManager({
   const [loading, setLoading] = useState(initialNominees.length === 0);
   const [uploading, setUploading] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [editingNomineeId, setEditingNomineeId] = useState<string | null>(null);
   const [form, setForm] = useState({
     category_id: initialCategories[0]?.id || "",
     subcategory_id: initialCategories[0]?.subcategories?.[0]?.id || "",
     name: "",
     known_name: "",
     status: "pending" as NomineeStatus,
+    gender: "",
   });
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [newSubName, setNewSubName] = useState("");
@@ -76,7 +95,7 @@ export function NomineesManager({
     sub.name.toLowerCase().includes(subSearch.toLowerCase())
   );
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (preferredCategoryId?: string) => {
     setLoading(true);
     try {
       const [cats, noms] = await Promise.all([
@@ -94,14 +113,25 @@ export function NomineesManager({
       setNominees(nomineesList);
 
       setForm((f) => {
-        const nextCatId = f.category_id || categoriesList[0]?.id || "";
-        const selected = categoriesList.find(c => c.id === nextCatId);
+        const nextCatId = preferredCategoryId || f.category_id || categoriesList[0]?.id || "";
+        const selected = categoriesList.find((c) => c.id === nextCatId);
 
         // Handle cases where subcategories might be null/missing
         const subs = Array.isArray(selected?.subcategories) ? selected.subcategories : [];
-        const nextSubId = f.subcategory_id || subs[0]?.id || "";
+        const nextSubId =
+          preferredCategoryId || f.category_id !== nextCatId
+            ? subs[0]?.id || ""
+            : f.subcategory_id || subs[0]?.id || "";
 
-        return { ...f, category_id: nextCatId, subcategory_id: nextSubId };
+        const hasDanceSubs = hasDanceGenderSubcategories(selected);
+        let gender = hasDanceSubs ? f.gender || "" : "";
+        if (hasDanceSubs && !gender && f.subcategory_id) {
+          const currentSub = subs.find((s) => s.id === f.subcategory_id);
+          if (currentSub?.name.toLowerCase().includes('male')) gender = 'male';
+          if (currentSub?.name.toLowerCase().includes('female')) gender = 'female';
+        }
+
+        return { ...f, category_id: nextCatId, subcategory_id: nextSubId, gender };
       });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to load");
@@ -115,17 +145,55 @@ export function NomineesManager({
     void load();
   }, [filter, load]);
 
-  async function create(e: React.FormEvent) {
+  function resetForm() {
+    setEditingNomineeId(null);
+    setForm((prev) => ({
+      ...prev,
+      name: "",
+      known_name: "",
+      status: "pending",
+      gender: "",
+      subcategory_id: selectedCategory?.subcategories?.[0]?.id || "",
+    }));
+    setImageFile(null);
+    const fileInput = document.getElementById("nominee-image-input") as HTMLInputElement | null;
+    if (fileInput) fileInput.value = "";
+  }
+
+  async function startEdit(nominee: NomineeWithMeta) {
+    const selectedCat = categories.find((c) => c.id === nominee.category_id);
+    const selectedSub = selectedCat?.subcategories?.find((s) => s.id === nominee.subcategory_id);
+    const gender = selectedSub?.name.toLowerCase().includes("male")
+      ? "male"
+      : selectedSub?.name.toLowerCase().includes("female")
+        ? "female"
+        : "";
+
+    setEditingNomineeId(nominee.id);
+    setForm({
+      category_id: nominee.category_id,
+      subcategory_id: nominee.subcategory_id || "",
+      name: nominee.name,
+      known_name: nominee.known_name || "",
+      status: nominee.status,
+      gender,
+    });
+  }
+
+  async function saveNominee(e: React.FormEvent) {
     e.preventDefault();
     const categoryId = form.category_id || categories[0]?.id;
     if (!categoryId) {
-      toast.error("Please select a category before creating a nominee.");
+      toast.error("Please select a category before saving a nominee.");
       return;
     }
 
     try {
-      const res = await adminFetch<{ nominee: { id: string } }>("/api/admin/nominees", {
-        method: "POST",
+      const isEditing = Boolean(editingNomineeId);
+      const path = isEditing ? `/api/admin/nominees/${editingNomineeId}` : "/api/admin/nominees";
+      const method = isEditing ? "PATCH" : "POST";
+      const res = await adminFetch<{ nominee: { id: string } }>(path, {
+        method,
         body: JSON.stringify({
           category_id: categoryId,
           subcategory_id: form.subcategory_id || null,
@@ -136,26 +204,25 @@ export function NomineesManager({
         }),
       });
 
-      const newNomineeId = res.nominee?.id;
-
-      if (newNomineeId && imageFile) {
-        await uploadImage(newNomineeId, imageFile, false);
+      const savedNomineeId = res.nominee?.id;
+      if (savedNomineeId && imageFile) {
+        await uploadImage(savedNomineeId, imageFile, false);
       }
 
-      toast.success("Nominee created successfully!");
-      setForm((prev) => ({
-        ...prev,
-        name: "",
-        known_name: "",
-      }));
-      setImageFile(null);
+      toast.success(isEditing ? "Nominee updated successfully!" : "Nominee created successfully!");
+      if (isEditing) {
+        resetForm();
+      } else {
+        setForm((prev) => ({ ...prev, name: "", known_name: "" }));
+        setImageFile(null);
+      }
 
       const fileInput = document.getElementById("nominee-image-input") as HTMLInputElement | null;
       if (fileInput) fileInput.value = "";
 
       await load();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Create failed");
+      toast.error(err instanceof Error ? err.message : "Save failed");
     }
   }
 
@@ -253,10 +320,12 @@ export function NomineesManager({
 
       const categoryId = res?.category?.id;
 
-      // Pro Implementation: Specialized logic for TikTok Dancers
-      if (categoryId && newCatTitle.toLowerCase().includes('tiktok dancers')) {
-        const defaultSubs = ['Best Male', 'Best Female'];
-        const subRequests = defaultSubs.map(subName =>
+      // Auto-create male/female subcategories for dancer categories.
+      const shouldAddDanceSubs = shouldCreateDanceGenderSubcategories(newCatTitle);
+      const defaultSubs = ['Best Male Dancer', 'Best Female Dancer'];
+
+      if (categoryId && shouldAddDanceSubs) {
+        const subRequests = defaultSubs.map((subName) =>
           adminFetch('/api/admin/subcategories', {
             method: 'POST',
             body: JSON.stringify({
@@ -267,13 +336,13 @@ export function NomineesManager({
           })
         );
         await Promise.all(subRequests);
-        toast.success("Category created with TikTok Dancers subcategories");
+        toast.success('Category created with Best Male Dancer/Best Female Dancer subcategories');
       } else {
         toast.success("Category created successfully!");
       }
 
       setNewCatTitle("");
-      await load();
+      await load(categoryId);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to create category");
     } finally {
@@ -333,6 +402,37 @@ export function NomineesManager({
     }
   }
 
+  async function rejectNominee(id: string) {
+    if (!canEdit || !confirm("Mark this nominee as rejected?")) return;
+    setDeletingId(id);
+    try {
+      await adminFetch(`/api/admin/nominees/${id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "rejected" }),
+      });
+      toast.success("Nominee marked as rejected");
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Reject failed");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  async function deleteNominee(id: string) {
+    if (!isSuper || !confirm("Permanently delete this nominee? This cannot be undone.")) return;
+    setDeletingId(id);
+    try {
+      await adminFetch(`/api/admin/nominees/${id}`, { method: "DELETE" });
+      toast.success("Nominee permanently deleted");
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   async function uploadImage(nomineeId: string, file: File, shouldReload = true) {
     setUploading(nomineeId);
     try {
@@ -361,20 +461,6 @@ export function NomineesManager({
       toast.error(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setUploading(null);
-    }
-  }
-
-  async function remove(id: string) {
-    if (!isSuper || !confirm("Delete this nominee permanently?")) return;
-    setDeletingId(id);
-    try {
-      await adminFetch(`/api/admin/nominees/${id}`, { method: "DELETE" });
-      toast.success("Nominee and associated assets deleted");
-      await load();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Delete failed");
-    } finally {
-      setDeletingId(null);
     }
   }
 
@@ -528,10 +614,10 @@ export function NomineesManager({
 
       <Card>
         <CardHeader>
-          <CardTitle>Add nominee</CardTitle>
+          <CardTitle>{editingNomineeId ? "Edit nominee" : "Add nominee"}</CardTitle>
         </CardHeader>
         <CardContent>
-          <form className="grid gap-3 md:grid-cols-2" onSubmit={create}>
+          <form className="grid gap-3 md:grid-cols-2" onSubmit={saveNominee}>
             <div className="space-y-2 md:col-span-2">
               <div className="flex items-center justify-between">
                 <Label>Category</Label>
@@ -589,6 +675,7 @@ export function NomineesManager({
                       ...form,
                       category_id: categoryId,
                       subcategory_id: selectedCategory?.subcategories?.[0]?.id || "",
+                      gender: "",
                     });
                   }}
                   required
@@ -670,18 +757,49 @@ export function NomineesManager({
                       className="h-8 text-xs bg-black/20 border-white/5"
                     />
                   )}
-                  <select
-                    className="flex h-10 w-full rounded-md border border-white/10 bg-black/40 px-3 text-sm text-zinc-100"
-                    value={form.subcategory_id}
-                    onChange={(e) => setForm({ ...form, subcategory_id: e.target.value })}
-                  >
-                    <option value="">Choose a subcategory</option>
-                    {filteredSubcategories.map((sub) => (
-                      <option key={sub.id} value={sub.id}>
-                        {sub.name}
-                      </option>
-                    ))}
-                  </select>
+                  <div>
+                    <select
+                      className="flex h-10 w-full rounded-md border border-white/10 bg-black/40 px-3 text-sm text-zinc-100"
+                      value={form.subcategory_id}
+                      onChange={(e) => {
+                        const subcategoryId = e.target.value;
+                        const selectedSub = selectedCategory?.subcategories?.find((s) => s.id === subcategoryId);
+                        const gender = selectedSub?.name.toLowerCase().includes('male')
+                          ? 'male'
+                          : selectedSub?.name.toLowerCase().includes('female')
+                            ? 'female'
+                            : '';
+                        setForm({ ...form, subcategory_id: subcategoryId, gender });
+                      }}
+                    >
+                      <option value="">Choose a subcategory</option>
+                      {filteredSubcategories.map((sub) => (
+                        <option key={sub.id} value={sub.id}>
+                          {sub.name}
+                        </option>
+                      ))}
+                    </select>
+                    {/* Gender shortcut for dancer categories */}
+                    {hasDanceGenderSubcategories(selectedCategory) && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <Label>Gender</Label>
+                        <select
+                          className="flex h-9 rounded-md border border-white/10 bg-black/30 px-2 text-sm text-zinc-100"
+                          value={form.gender}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            const subs = selectedCategory?.subcategories || [];
+                            const targetSub = subs.find(s => s.name.toLowerCase().includes(val));
+                            setForm({ ...form, gender: val, subcategory_id: targetSub?.id || "" });
+                          }}
+                        >
+                          <option value="">Auto-select Male/Female</option>
+                          <option value="male">Male</option>
+                          <option value="female">Female</option>
+                        </select>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
               <div className="mt-2 flex gap-2">
@@ -729,10 +847,15 @@ export function NomineesManager({
                 }}
               />
             </div>
-            <div className="md:col-span-2 pt-2">
+            <div className="md:col-span-2 pt-2 flex flex-wrap gap-2">
               <Button type="submit" disabled={uploading !== null}>
-                {uploading ? "Uploading image…" : "Create nominee"}
+                {uploading ? "Uploading image…" : editingNomineeId ? "Save nominee" : "Create nominee"}
               </Button>
+              {editingNomineeId ? (
+                <Button type="button" variant="outline" onClick={resetForm}>
+                  Cancel edit
+                </Button>
+              ) : null}
             </div>
           </form>
         </CardContent>
@@ -813,12 +936,26 @@ export function NomineesManager({
                       />
                       {uploading === n.id ? "Uploading…" : "Upload image"}
                     </label>
+                    <Button size="sm" variant="outline" onClick={() => void startEdit(n)}>
+                      <Pencil className="h-3 w-3 mr-1" />
+                      Edit
+                    </Button>
+                    {canEdit ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={deletingId === n.id}
+                        onClick={() => void rejectNominee(n.id)}
+                      >
+                        {deletingId === n.id ? "Rejecting..." : "Reject"}
+                      </Button>
+                    ) : null}
                     {isSuper ? (
                       <Button
                         size="sm"
                         variant="destructive"
                         disabled={deletingId === n.id}
-                        onClick={() => void remove(n.id)}
+                        onClick={() => void deleteNominee(n.id)}
                       >
                         {deletingId === n.id ? "Deleting..." : "Delete"}
                       </Button>

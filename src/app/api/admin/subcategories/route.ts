@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { assertTrustedOrigin } from "@/lib/csrf";
 import { requireAdmin, isAdminResponse, audit } from "@/lib/admin/auth";
-import { subcategorySchema } from "@/lib/validation/admin";
+import { subcategorySchema, updateSubcategorySchema } from "@/lib/validation/admin";
 
 export async function POST(request: Request) {
     try {
@@ -63,8 +63,8 @@ export async function PATCH(request: Request) {
         return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
     }
 
-    const parsed = subcategorySchema.safeParse(json);
-    if (!parsed.success || !parsed.data.id) {
+    const parsed = updateSubcategorySchema.safeParse(json);
+    if (!parsed.success) {
         return NextResponse.json({ error: "Invalid subcategory payload" }, { status: 400 });
     }
 

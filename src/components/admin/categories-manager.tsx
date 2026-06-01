@@ -24,6 +24,21 @@ const generateSlug = (text: string) => {
     .replace(/[^a-z0-9-]/g, "");
 };
 
+const shouldCreateDanceGenderSubcategories = (title: string) => {
+  const normalized = title.trim().toLowerCase();
+  return (
+    normalized.includes('tiktok dancers') ||
+    normalized.includes('best dancer') ||
+    normalized.includes('dancer creator') ||
+    normalized.includes('dancer creators')
+  );
+};
+
+const isDanceSubcategoryName = (text: string) => {
+  const normalized = text.trim().toLowerCase();
+  return normalized.includes('dance') || normalized.includes('dancer');
+};
+
 export function CategoriesManager({ role }: { role: AdminRole }) {
   const isSuper = role === "super_admin";
   const canEdit = role === "super_admin" || role === "moderator";
@@ -31,6 +46,7 @@ export function CategoriesManager({ role }: { role: AdminRole }) {
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [subForms, setSubForms] = useState<Record<string, string>>({});
+  const [subFormGender, setSubFormGender] = useState<Record<string, string>>({});
   const [addingSubTo, setAddingSubTo] = useState<string | null>(null);
   const [form, setForm] = useState({ title: "", section: "", description: "", sort_order: "0" });
 
@@ -67,9 +83,11 @@ export function CategoriesManager({ role }: { role: AdminRole }) {
 
       const categoryId = res?.category?.id;
 
-      if (categoryId && form.title.toLowerCase().includes('tiktok dancers')) {
-        const defaultSubs = ['Best Male', 'Best Female'];
-        const subRequests = defaultSubs.map(subName =>
+      const shouldAddDanceSubs = shouldCreateDanceGenderSubcategories(form.title);
+      const defaultSubs = ['Best Male Dancer', 'Best Female Dancer'];
+
+      if (categoryId && shouldAddDanceSubs) {
+        const subRequests = defaultSubs.map((subName) =>
           adminFetch('/api/admin/subcategories', {
             method: 'POST',
             body: JSON.stringify({
@@ -80,7 +98,7 @@ export function CategoriesManager({ role }: { role: AdminRole }) {
           })
         );
         await Promise.all(subRequests);
-        toast.success("Category created with TikTok Dancers subcategories");
+        toast.success('Category created with Best Male Dancer/Best Female Dancer subcategories');
       } else {
         toast.success("Category created");
       }
@@ -109,6 +127,7 @@ export function CategoriesManager({ role }: { role: AdminRole }) {
 
   async function addSub(categoryId: string) {
     const name = subForms[categoryId];
+    const gender = subFormGender[categoryId];
 
     if (!name?.trim()) {
       toast.error("Please enter a subcategory name");
@@ -117,18 +136,26 @@ export function CategoriesManager({ role }: { role: AdminRole }) {
 
     if (!canEdit) return;
 
+    const isDance = isDanceSubcategoryName(name);
+    const subcategoryName = isDance && (gender === 'male' || gender === 'female')
+      ? gender === 'male'
+        ? 'Best Male Dancer'
+        : 'Best Female Dancer'
+      : name.trim();
+
     setAddingSubTo(categoryId);
     try {
       await adminFetch("/api/admin/subcategories", {
         method: "POST",
         body: JSON.stringify({
           category_id: categoryId,
-          name: name.trim(),
-          slug: generateSlug(name) // Ensure slug is provided if required by schema
+          name: subcategoryName,
+          slug: generateSlug(subcategoryName)
         }),
       });
       toast.success("Subcategory added");
       setSubForms(prev => ({ ...prev, [categoryId]: "" }));
+      setSubFormGender(prev => ({ ...prev, [categoryId]: "" }));
       void load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to add subcategory");
@@ -238,26 +265,42 @@ export function CategoriesManager({ role }: { role: AdminRole }) {
                   </div>
 
                   {canEdit && (
-                    <div className="flex gap-2 pt-1">
-                      <Input
-                        placeholder="New subcategory"
-                        className="h-8 text-xs bg-black/40 border-white/5"
-                        value={subForms[c.id] || ""}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setSubForms(prev => ({ ...prev, [c.id]: val }));
-                        }}
-                        onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), void addSub(c.id))}
-                      />
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-8 px-2 border-white/10"
-                        onClick={() => void addSub(c.id)}
-                        disabled={addingSubTo === c.id}
-                      >
-                        {addingSubTo === c.id ? <span className="text-[10px]">...</span> : <Plus className="h-3 w-3" />}
-                      </Button>
+                    <div className="space-y-2 pt-1">
+                      <div className="flex gap-2">
+                        <Input
+                          placeholder="New subcategory"
+                          className="h-8 text-xs bg-black/40 border-white/5"
+                          value={subForms[c.id] || ""}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setSubForms(prev => ({ ...prev, [c.id]: val }));
+                          }}
+                          onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), void addSub(c.id))}
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 px-2 border-white/10"
+                          onClick={() => void addSub(c.id)}
+                          disabled={addingSubTo === c.id}
+                        >
+                          {addingSubTo === c.id ? <span className="text-[10px]">...</span> : <Plus className="h-3 w-3" />}
+                        </Button>
+                      </div>
+                      {isDanceSubcategoryName(subForms[c.id] || "") && (
+                        <div className="flex items-center gap-2 text-xs text-zinc-300">
+                          <Label className="text-[10px] uppercase tracking-wider text-zinc-500">Gender</Label>
+                          <select
+                            className="h-8 rounded-md border border-white/10 bg-black/40 px-2 text-xs text-zinc-100"
+                            value={subFormGender[c.id] || ""}
+                            onChange={(e) => setSubFormGender(prev => ({ ...prev, [c.id]: e.target.value }))}
+                          >
+                            <option value="">Choose gendered category</option>
+                            <option value="male">Best Male Dancer</option>
+                            <option value="female">Best Female Dancer</option>
+                          </select>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

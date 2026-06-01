@@ -343,7 +343,8 @@ insert into public.subcategories (category_id, name) values
   -- TikTok
   ((select id from public.categories where slug = 'tiktok'), 'Best TikTok Creator'),
   ((select id from public.categories where slug = 'tiktok'), 'Best Comedy TikToker'),
-  ((select id from public.categories where slug = 'tiktok'), 'Best Dance Creator'),
+  ((select id from public.categories where slug = 'tiktok'), 'Best Male Dancer'),
+  ((select id from public.categories where slug = 'tiktok'), 'Best Female Dancer'),
   ((select id from public.categories where slug = 'tiktok'), 'Best Lifestyle TikToker'),
   ((select id from public.categories where slug = 'tiktok'), 'Best Couple Content Creator'),
   ((select id from public.categories where slug = 'tiktok'), 'Best Educational TikTok Creator'),

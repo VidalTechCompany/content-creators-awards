@@ -131,7 +131,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const { categoryId, nomineeId, fingerprint, captchaToken } = parsed.data;
+  const { categoryId, subcategoryId, nomineeId, fingerprint, captchaToken } = parsed.data;
 
   // 7. CAPTCHA verification
   const isHuman = await verifyTurnstile(captchaToken, ip);
@@ -174,29 +174,81 @@ export async function POST(request: Request) {
   // 11. Validate nominee exists and is approved
   const { data: nominee, error: nomErr } = await admin
     .from("nominees")
-    .select("id, category_id, status")
+    .select("id, category_id, subcategory_id, status")
     .eq("id", nomineeId)
     .maybeSingle();
 
-  if (nomErr || !nominee || nominee.status !== "approved" || nominee.category_id !== categoryId) {
+  if (nomErr || !nominee || nominee.status !== "approved") {
     return NextResponse.json(
-      { error: "Invalid nominee or category. Please select a valid option." },
+      { error: "Invalid nominee or candidate. Please select a valid option." },
       { status: 400 }
     );
   }
 
+  if (nominee.category_id !== categoryId) {
+    return NextResponse.json(
+      { error: "Invalid category for this nominee." },
+      { status: 400 }
+    );
+  }
+
+  if (nominee.subcategory_id && !subcategoryId) {
+    return NextResponse.json(
+      { error: "This nominee requires a subcategory selection." },
+      { status: 400 }
+    );
+  }
+
+  if (!nominee.subcategory_id && subcategoryId) {
+    return NextResponse.json(
+      { error: "Invalid subcategory for this nominee." },
+      { status: 400 }
+    );
+  }
+
+  if (nominee.subcategory_id && subcategoryId !== nominee.subcategory_id) {
+    return NextResponse.json(
+      { error: "The selected subcategory does not match this nominee." },
+      { status: 400 }
+    );
+  }
+
+  const voteScope = nominee.subcategory_id
+    ? { scopeType: "subcategory", scopeId: nominee.subcategory_id }
+    : { scopeType: "category", scopeId: categoryId };
+
   // 12. Device fingerprint check (prevent multiple votes from same device)
-  const { count: fingerprintCount } = await admin
-    .from("votes")
-    .select("*", { count: "exact", head: true })
-    .eq("category_id", categoryId)
-    .eq("fingerprint", fingerprint.trim().slice(0, 512));
+  const fingerprintQuery = admin.from("votes").select("*", { count: "exact", head: true });
+  const userQuery = admin.from("votes").select("*", { count: "exact", head: true });
+
+  if (voteScope.scopeType === "subcategory") {
+    fingerprintQuery.eq("subcategory_id", voteScope.scopeId);
+    userQuery.eq("subcategory_id", voteScope.scopeId);
+  } else {
+    fingerprintQuery.eq("category_id", voteScope.scopeId);
+    userQuery.eq("category_id", voteScope.scopeId);
+  }
+
+  fingerprintQuery.eq("fingerprint", fingerprint.trim().slice(0, 512));
+
+  const { count: fingerprintCount } = await fingerprintQuery;
 
   if ((fingerprintCount ?? 0) > 0) {
     return NextResponse.json(
-      { error: "This device has already voted in this category" },
+      { error: "This device has already voted in this voting scope" },
       { status: 409 }
     );
+  }
+
+  if (userId) {
+    userQuery.eq("user_id", userId);
+    const { count: userCount } = await userQuery;
+    if ((userCount ?? 0) > 0) {
+      return NextResponse.json(
+        { error: "This account has already voted in this voting scope" },
+        { status: 409 }
+      );
+    }
   }
 
   // 13. Cooldown check for registered users
@@ -241,6 +293,7 @@ export async function POST(request: Request) {
   const { error: voteError } = await admin.from("votes").insert({
     user_id: userId ?? null,
     category_id: categoryId,
+    subcategory_id: voteScope.scopeType === "subcategory" ? voteScope.scopeId : null,
     nominee_id: nomineeId,
     ip_address: ip,
     user_agent: ua.slice(0, 512),
@@ -276,7 +329,12 @@ export async function POST(request: Request) {
     action: "vote_cast",
     entity: "votes",
     entity_id: nomineeId,
-    meta: { categoryId, ip, fingerprint: fingerprint.slice(0, 32) },
+    meta: {
+      categoryId,
+      subcategoryId: voteScope.scopeType === "subcategory" ? voteScope.scopeId : null,
+      ip,
+      fingerprint: fingerprint.slice(0, 32),
+    },
   });
 
   // 18. Return success

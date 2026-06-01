@@ -70,7 +70,7 @@ export default async function NomineeProfilePage({ params }: Props) {
   const [nomineeRes, settingsRes] = await Promise.all([
     supabase
       .from("nominees")
-      .select("*, categories (id, slug, title), subcategories (name), nominee_stats(vote_count)")
+      .select("*, categories (id, slug, title), subcategories (id, name), nominee_stats(vote_count)")
       .eq("id", id)
       .eq("status", "approved")
       .maybeSingle(),
@@ -95,7 +95,8 @@ export default async function NomineeProfilePage({ params }: Props) {
   }
 
   const rawSub = nominee.subcategories;
-  const subcategory = (Array.isArray(rawSub) ? rawSub[0] : rawSub) as { name: string } | null;
+  const subcategory = (Array.isArray(rawSub) ? rawSub[0] : rawSub) as { id: string; name: string } | null;
+  const subcategoryId = subcategory?.id ?? null;
   const rawStats = nominee.nominee_stats;
   const initialVotes = Array.isArray(rawStats) ? rawStats[0]?.vote_count ?? 0 : (rawStats as { vote_count: number } | null)?.vote_count ?? 0;
   const socials = (nominee.social_links as Record<string, string>) ?? {};
@@ -180,6 +181,8 @@ export default async function NomineeProfilePage({ params }: Props) {
                 categoryId={category.id}
                 nomineeId={nominee.id}
                 nomineeName={nominee.name}
+                subcategoryId={subcategoryId}
+                nomineeSubcategoryName={subcategory?.name ?? null}
                 canVote={canVote}
                 verifyNote={verifyNote}
               />

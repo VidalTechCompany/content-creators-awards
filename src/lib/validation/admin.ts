@@ -20,12 +20,19 @@ export const nomineeSchema = z.object({
   status: z.enum(["pending", "approved", "rejected"]).optional(),
 });
 
+export const updateNomineeSchema = nomineeSchema.partial().refine((data) => Object.keys(data).length > 0, {
+  message: "At least one field is required",
+});
+
 export const subcategorySchema = z.object({
   id: z.string().uuid().optional(),
   category_id: z.string().uuid(),
   name: z.string().min(2).max(120),
 });
-
+export const updateSubcategorySchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(2).max(120),
+});
 export const nomineeStatusSchema = z.object({
   status: z.enum(["pending", "approved", "rejected"]),
 });

@@ -57,6 +57,8 @@ type Props = {
   categoryId: string;
   nomineeId: string;
   nomineeName: string;
+  subcategoryId?: string | null;
+  nomineeSubcategoryName?: string | null;
   canVote: boolean;
   verifyNote?: string | null;
 };
@@ -65,6 +67,8 @@ export function VoteWithCaptchaButton({
   categoryId,
   nomineeId,
   nomineeName,
+  subcategoryId,
+  nomineeSubcategoryName,
   canVote,
   verifyNote,
 }: Props) {
@@ -112,6 +116,7 @@ export function VoteWithCaptchaButton({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           categoryId,
+          subcategoryId: subcategoryId ?? null,
           nomineeId,
           fingerprint: fp,
           captchaToken: captchaTokenValue,
@@ -153,7 +158,11 @@ export function VoteWithCaptchaButton({
         <DialogHeader>
           <DialogTitle>Confirm your vote</DialogTitle>
           <DialogDescription>
-            You are voting for <span className="text-amber-200">{nomineeName}</span>. This action is protected by audit logging.
+            You are voting for <span className="text-amber-200">{nomineeName}</span>
+            {nomineeSubcategoryName ? (
+              <><span> in </span><span className="text-amber-200">{nomineeSubcategoryName}</span></>
+            ) : null}
+            . This action is protected by audit logging.
           </DialogDescription>
         </DialogHeader>
         <div className="mt-4">

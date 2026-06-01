@@ -29,6 +29,7 @@ interface Nominee {
   social_links: Record<string, string> | null;
   status: string;
   category_id: string;
+  subcategory_id: string | null;
   subcategories: Subcategory | Subcategory[] | null;
   nominee_stats: NomineeStats | NomineeStats[] | null;
 }
@@ -145,6 +146,9 @@ export default async function CategoryDetailPage({ params }: Props) {
         social_links: (nomineeRecord.social_links as Record<string, string> | null) ?? {},
         status: String(nomineeRecord.status ?? "pending"),
         category_id: String(nomineeRecord.category_id || ""),
+        subcategory_id: Array.isArray(subcategories)
+          ? (subcategories[0] as Subcategory)?.id ?? null
+          : (subcategories as Subcategory)?.id ?? null,
         subcategories: Array.isArray(subcategories)
           ? (subcategories[0] as Subcategory) || null
           : (subcategories as Subcategory) || null,
@@ -225,6 +229,7 @@ export default async function CategoryDetailPage({ params }: Props) {
                 const bio = nominee.bio || "";
                 const imageUrl = nominee.image_url;
                 const socials = nominee.social_links || {};
+                const subcategoryId = nominee.subcategory_id;
 
                 return (
                   <div
@@ -310,6 +315,8 @@ export default async function CategoryDetailPage({ params }: Props) {
                           categoryId={category.id}
                           nomineeId={id}
                           nomineeName={knownName}
+                          subcategoryId={subcategoryId}
+                          nomineeSubcategoryName={subcategoryName}
                           canVote={canVote}
                           verifyNote={verifyNote}
                         />

@@ -77,6 +77,16 @@ export default function CategoriesPage() {
     }));
   };
 
+  const shouldCreateDanceGenderSubcategories = (title: string) => {
+    const normalized = title.trim().toLowerCase();
+    return (
+      normalized.includes('tiktok dancers') ||
+      normalized.includes('best dancer') ||
+      normalized.includes('dancer creator') ||
+      normalized.includes('dancer creators')
+    );
+  };
+
   const handleCreateCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -87,12 +97,11 @@ export default function CategoriesPage() {
       });
 
       const categoryId = res?.category?.id;
+      const shouldAddDanceSubs = shouldCreateDanceGenderSubcategories(newCategory.title);
+      const defaultSubs = ['Best Male Dancer', 'Best Female Dancer'];
 
-      // Pro Implementation: Parallel subcategory creation for TikTok Dancers
-      if (categoryId && newCategory.title.toLowerCase().includes('tiktok dancers')) {
-        const defaultSubs = ['Best Male', 'Best Female'];
-
-        const subRequests = defaultSubs.map(subName =>
+      if (categoryId && shouldAddDanceSubs) {
+        const subRequests = defaultSubs.map((subName) =>
           adminFetch('/api/admin/subcategories', {
             method: 'POST',
             body: JSON.stringify({
@@ -102,9 +111,8 @@ export default function CategoriesPage() {
             }),
           })
         );
-
         await Promise.all(subRequests);
-        toast.success('Category created with Best Male/Female subcategories');
+        toast.success('Category created with Best Male Dancer/Best Female Dancer subcategories');
       } else {
         toast.success('Category created successfully');
       }
