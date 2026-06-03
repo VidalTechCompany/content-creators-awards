@@ -43,3 +43,7 @@ next-env.d.ts
 # Ignore Supabase migrations
 supabase/migrations/*.sql
 
+README.md
+SUPABASE_SETUP.md
+scripts/
+
