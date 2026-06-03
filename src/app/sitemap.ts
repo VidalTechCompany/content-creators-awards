@@ -2,7 +2,9 @@ import type { MetadataRoute } from "next";
 import { createClientOrNull } from "@/lib/supabase/server";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const base = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+  // Strip trailing slash if present to avoid accidental double slashes (//) in URLs
+  const rawBase = process.env.NEXT_PUBLIC_SITE_URL ?? "https://molocontentcreatorsawards.co.ke";
+  const base = rawBase.endsWith("/") ? rawBase.slice(0, -1) : rawBase;
 
   const staticRoutes: MetadataRoute.Sitemap = [
     "",
@@ -19,7 +21,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ].map((path) => ({
     url: `${base}${path}`,
     lastModified: new Date(),
-    changeFrequency: "weekly",
+    changeFrequency: "weekly" as const, // Added 'as const' to fix the TS compilation error
     priority: path === "" ? 1 : 0.7,
   }));
 
