@@ -34,9 +34,13 @@ export default async function LeaderboardPage() {
   return (
     <div className="mx-auto max-w-4xl py-12">
       <h1 className="font-serif text-4xl text-amber-50">Leaderboard</h1>
-      <p className="mt-2 text-sm text-zinc-400">
-        Totals update in realtime when `nominee_stats` replication is enabled in Supabase.
-      </p>
+      <div className="mt-2 flex items-center gap-2 text-sm text-zinc-400">
+        <span className="relative flex h-2 w-2">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75"></span>
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500"></span>
+        </span>
+        <p>Live standings. Vote counts are automatically updated and verified for integrity.</p>
+      </div>
       <ol className="mt-8 space-y-3">
         {rows.map((row, idx) => {
           const nom = row.nominees;

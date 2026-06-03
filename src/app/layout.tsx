@@ -44,7 +44,7 @@ export const metadata: Metadata = {
     siteName: "Molo Content Creators Awards",
     images: [
       {
-        url: "/og.png", // Ensure you have a nice preview image placed in your public/ folder
+        url: "/og-image.png", // Ensure you have a nice preview image placed in your public/ folder
         width: 1200,
         height: 630,
         alt: "Molo Content Creators Awards Banner",
@@ -57,7 +57,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Molo Content Creators Awards",
     description: "Cast your vote and support your favorite digital creators!",
-    images: ["/og.png"],
+    images: ["/og-image.png"],
   },
 };
 
