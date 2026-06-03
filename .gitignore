@@ -4,3 +4,6 @@
 # Allow the .gitignore file itself so the rules stay active
 !.gitignore
 SUPABASE_SETUP.md
+
+# Ignore the project readme
+README.md
