@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { Cormorant_Garamond, DM_Sans } from "next/font/google";
-// @ts-expect-error: CSS modules configuration override
 import "./globals.css";
 import { AppProviders } from "@/components/providers/app-providers";
 import { SessionProvider } from "@/components/providers/session-provider";
