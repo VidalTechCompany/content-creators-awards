@@ -33,13 +33,18 @@ async function FeaturedSection() {
 export default async function HomePage() {
   const supabase = await createClientOrNull();
 
+  if (!supabase) {
+    // Fallback if Supabase fails to initialize
+    return <div className="py-20 text-center text-zinc-500">Service temporarily unavailable.</div>;
+  }
+
   const [settingsResult, sponsorsResult] = await Promise.all([
-    supabase ? supabase.from("site_settings").select("voting_deadline").eq("id", 1).maybeSingle() : Promise.resolve({ data: null }),
-    supabase ? supabase.from("sponsors").select("id, name, website_url").eq("active", true).order("sort_order") : Promise.resolve({ data: [] })
+    supabase.from("site_settings").select("voting_deadline").eq("id", 1).maybeSingle(),
+    supabase.from("sponsors").select<"id, name, website_url", SponsorRow>("id, name, website_url").eq("active", true).order("sort_order")
   ]);
 
   const settings = settingsResult?.data;
-  const sponsors = (sponsorsResult?.data as SponsorRow[]) ?? [];
+  const sponsors = sponsorsResult?.data ?? [];
 
   return (
     <div>
@@ -84,7 +89,7 @@ export default async function HomePage() {
                 </div>
               ))
             ) : (
-              <p className="text-sm text-zinc-600">Add sponsors in Supabase or the admin dashboard.</p>
+              <p className="text-sm text-zinc-600 italic">Official partners to be announced soon.</p>
             )}
           </div>
         </div>
