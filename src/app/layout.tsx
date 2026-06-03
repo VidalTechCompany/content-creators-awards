@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { Cormorant_Garamond, DM_Sans } from "next/font/google";import "./globals.css";
+import { Cormorant_Garamond, DM_Sans } from "next/font/google";
+import "./globals.css";
 import { AppProviders } from "@/components/providers/app-providers";
 import { SessionProvider } from "@/components/providers/session-provider";
 import { SiteHeader } from "@/components/layout/site-header";
@@ -43,7 +44,7 @@ export const metadata: Metadata = {
     siteName: "Molo Content Creators Awards",
     images: [
       {
-        url: "/og-image.png", // Ensure you have a nice preview image placed in your public/ folder
+        url: "/og.png", // Ensure you have a nice preview image placed in your public/ folder
         width: 1200,
         height: 630,
         alt: "Molo Content Creators Awards Banner",
@@ -56,7 +57,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Molo Content Creators Awards",
     description: "Cast your vote and support your favorite digital creators!",
-    images: ["/og-image.png"],
+    images: ["/og.png"],
   },
 };
 
