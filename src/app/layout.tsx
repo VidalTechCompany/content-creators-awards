@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
-import { Cormorant_Garamond, DM_Sans } from "next/font/google";
-import "./globals.css";
+import { Cormorant_Garamond, DM_Sans } from "next/font/google";import "./globals.css";
 import { AppProviders } from "@/components/providers/app-providers";
 import { SessionProvider } from "@/components/providers/session-provider";
 import { SiteHeader } from "@/components/layout/site-header";
