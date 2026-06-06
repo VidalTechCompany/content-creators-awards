@@ -391,62 +391,90 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  // LAYER 10: COOLDOWN CHECK
+    // ============================================
+  // LAYER 10: COOLDOWN CHECK (AUTHENTICATED USERS)
+  // ============================================
   if (userId) {
-    const { data: profile } = await admin
-      .from("profiles")
-      .select("last_vote_at")
-      .eq("id", userId)
-      .maybeSingle();
+    try {
+      const { data: profile, error: profileError } = await admin
+        .from("profiles")
+        .select("last_vote_at")
+        .eq("id", userId)
+        .maybeSingle();
 
-    if (profile?.last_vote_at) {
-      const delta = (Date.now() - new Date(profile.last_vote_at).getTime()) / 1000;
-      if (delta < VOTE_COOLDOWN_SEC) {
-        const waitSeconds = Math.ceil(VOTE_COOLDOWN_SEC - delta);
-        return NextResponse.json(
-          { error: `Please wait ${waitSeconds} seconds between votes.`, retryAfter: waitSeconds },
-          { 
-            status: 429,
-            headers: { 'Retry-After': String(waitSeconds) }
-          }
-        );
+      if (profileError) {
+        console.error("[VOTE_API] Profile fetch error:", profileError);
       }
+
+      if (profile?.last_vote_at) {
+        const lastVoteTime = new Date(profile.last_vote_at).getTime();
+        const now = Date.now();
+        const delta = (now - lastVoteTime) / 1000;
+        
+        if (delta < VOTE_COOLDOWN_SEC) {
+          const waitSeconds = Math.ceil(VOTE_COOLDOWN_SEC - delta);
+          return NextResponse.json(
+            { 
+              error: `Please wait ${waitSeconds} second${waitSeconds !== 1 ? 's' : ''} between votes.`, 
+              retryAfter: waitSeconds 
+            },
+            { 
+              status: 429,
+              headers: { 'Retry-After': String(waitSeconds) }
+            }
+          );
+        }
+      }
+    } catch (cooldownError) {
+      console.error("[VOTE_API] Cooldown check error:", cooldownError);
+      // Don't block vote on cooldown check error - proceed but log
     }
   }
 
-  // LAYER 11: IP BURST DETECTION & LOGGING (Fire and forget - no await)
-  const { count: ipBurst } = await admin
-    .from("votes")
-    .select("*", { count: "exact", head: true })
-    .eq("ip_address", ip)
-    .gte("created_at", new Date(Date.now() - 60 * 60 * 1000).toISOString());
-
-  if ((ipBurst ?? 0) > 40) {
-    // Fire and forget - no await to avoid blocking
-    logSafely(
-      admin.from("suspicious_activity").insert({
-        user_id: userId ?? null,
-        reason: "high_ip_volume",
-        meta: { ip, count: ipBurst, timestamp: new Date().toISOString() },
-      }),
-      "suspicious_activity"
-    );
-  }
-  
-
-    // ============================================
-  // LAYER 12: RECORD VOTE (Using RPC for INET casting)
-  // ============================================
-
-  // Validate and format IP address for INET column
-  const isValidIp = (ip: string): boolean => {
+  // Validate IP format for subsequent operations
+  const isValidIp = (ipAddr: string): boolean => {
     const ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
-    return ipv4Regex.test(ip);
+    return ipv4Regex.test(ipAddr);
   };
 
   const validIp = isValidIp(ip) ? ip : "0.0.0.0";
 
-  // Call the insert_vote RPC function (handles INET casting at database level)
+  // ============================================
+  // LAYER 11: IP BURST DETECTION (Using RPC to avoid INET casting errors)
+  // ============================================
+  try {
+    // Use the count_votes_by_ip RPC function instead of direct query
+    const { data: ipBurst, error: burstError } = await admin.rpc('count_votes_by_ip', {
+      p_ip_address: validIp,
+      p_hours_ago: 1
+    });
+    
+    if (burstError) {
+      console.error("[VOTE_API] IP burst detection RPC error:", burstError);
+    } else if ((ipBurst ?? 0) > 40) {
+      // Fire and forget - log suspicious activity without blocking
+      logSafely(
+        admin.from("suspicious_activity").insert({
+          user_id: userId ?? null,
+          reason: "high_ip_volume",
+          meta: { 
+            ip: validIp, 
+            count: ipBurst, 
+            timestamp: new Date().toISOString(),
+            window_hours: 1
+          },
+        }),
+        "suspicious_activity"
+      );
+    }
+  } catch (burstError) {
+    console.error("[VOTE_API] IP burst detection exception:", burstError);
+    // Don't block the vote on burst detection error
+  }
+
+  // ============================================
+  // LAYER 12: RECORD VOTE (Using RPC Function)
+  // ============================================
   const { data: newVoteId, error: voteError } = await admin.rpc('insert_vote', {
     p_user_id: userId ?? null,
     p_category_id: categoryId,
@@ -457,23 +485,17 @@ export async function POST(request: Request): Promise<NextResponse> {
     p_fingerprint: fingerprint.trim().slice(0, 512),
   });
 
-  // Handle vote insertion errors
   if (voteError) {
-    // PostgreSQL unique violation code
     if (voteError.code === "23505") {
-      console.warn(`[VOTE_API] Duplicate vote prevented for IP ${validIp}, nominee ${nomineeId}`);
       return NextResponse.json(
         { error: "You have already voted for this nominee." },
         { status: 409 }
       );
     }
 
-    // Log detailed error for debugging
     console.error("[VOTE_API] Vote insertion failed:", {
       code: voteError.code,
       message: voteError.message,
-      details: voteError.details,
-      hint: voteError.hint,
       ip: validIp,
       userId,
       nomineeId,
@@ -485,18 +507,15 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  // Verify we received a valid vote ID
   if (!newVoteId) {
-    console.error("[VOTE_API] Vote insertion returned no ID:", { validIp, userId, nomineeId });
+    console.error("[VOTE_API] Vote insertion returned no ID");
     return NextResponse.json(
       { error: "Vote recorded but unable to confirm. Please check your vote status." },
       { status: 202 }
     );
   }
 
-  // Create consistent vote object for downstream use
   const newVote = { id: newVoteId };
-
   // ============================================
   // LAYER 13: UPDATE NOMINEE STATS (ATOMIC)
   // ============================================
