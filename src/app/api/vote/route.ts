@@ -432,22 +432,26 @@ export async function POST(request: Request): Promise<NextResponse> {
       "suspicious_activity"
     );
   }
-
-  // LAYER 12: RECORD VOTE
-  const { data: newVote, error: voteError } = await admin
-    .from("votes")
-    .insert({
-      user_id: userId ?? null,
-      category_id: categoryId,
-      subcategory_id: scopeType === "subcategory" ? scopeId : null,
-      nominee_id: nomineeId,
-      ip_address: ip,
-      user_agent: getUserAgent(request),
-      fingerprint: fingerprint.trim().slice(0, 512),
-      created_at: new Date().toISOString(),
-    })
-    .select("id")
-    .single();
+  // ============================================
+  // LAYER 12: RECORD VOTE (Using RPC Function)
+  // ============================================
+  
+  // Ensure IP is properly formatted for INET column
+  let validIp = ip;
+  if (!validIp.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/)) {
+    validIp = '0.0.0.0'; // Fallback for invalid IPs
+  }
+  
+  // Call the insert_vote RPC function (handles INET casting)
+  const { data: newVoteId, error: voteError } = await admin.rpc('insert_vote', {
+    p_user_id: userId ?? null,
+    p_category_id: categoryId,
+    p_subcategory_id: scopeType === "subcategory" ? scopeId : null,
+    p_nominee_id: nomineeId,
+    p_ip_address: validIp,
+    p_user_agent: getUserAgent(request),
+    p_fingerprint: fingerprint.trim().slice(0, 512),
+  });
 
   if (voteError) {
     if (voteError.code === "23505") {
@@ -456,42 +460,66 @@ export async function POST(request: Request): Promise<NextResponse> {
         { status: 409 }
       );
     }
-    console.error("[VOTE_API] Vote insert error:", voteError);
+    
+    // Log detailed error for debugging
+    console.error("[VOTE_API] Vote insert error:", {
+      code: voteError.code,
+      message: voteError.message,
+      ip: validIp,
+      ipType: typeof validIp,
+    });
+    
     return NextResponse.json(
       { error: "Failed to record vote. Please try again." },
       { status: 500 }
     );
   }
 
-  // LAYER 13: UPDATE NOMINEE STATS (ATOMIC)
-  const { error: statsError } = await admin.rpc("increment_vote_count", {
-    p_nominee_id: nomineeId,
-  });
+  // Create a vote object for consistency with the rest of the code
+  const newVote = { id: newVoteId };
 
-  if (statsError) {
-    console.error("[VOTE_API] Stats update error:", statsError);
-    // Fire and forget logging
+  // ============================================
+  // LAYER 13: UPDATE NOMINEE STATS (ATOMIC)
+  // ============================================
+  try {
+    const { error: statsError } = await admin.rpc("increment_vote_count", {
+      p_nominee_id: nomineeId,
+    });
+
+    if (statsError) {
+      console.error("[VOTE_API] Stats update error:", statsError);
+      // Fire and forget logging
+      logSafely(
+        admin.from("audit_logs").insert({
+          actor_id: userId ?? 'system',
+          action: "vote_stats_failed",
+          entity: "votes",
+          entity_id: newVote.id,
+          meta: { nomineeId, error: statsError.message },
+        }),
+        "vote_stats_failed"
+      );
+    }
+  } catch (statsError) {
+    console.error("[VOTE_API] Stats RPC error:", statsError);
+  }
+
+  // ============================================
+  // LAYER 14: UPDATE USER COOLDOWN (Non-blocking)
+  // ============================================
+  if (userId) {
     logSafely(
-      admin.from("audit_logs").insert({
-        actor_id: userId ?? 'system',
-        action: "vote_stats_failed",
-        entity: "votes",
-        entity_id: newVote.id,
-        meta: { nomineeId, error: statsError.message },
-      }),
-      "vote_stats_failed"
+      admin
+        .from("profiles")
+        .update({ last_vote_at: new Date().toISOString() })
+        .eq("id", userId),
+      "user_cooldown_update"
     );
   }
 
-  // LAYER 14: UPDATE USER COOLDOWN
-  if (userId) {
-    await admin
-      .from("profiles")
-      .update({ last_vote_at: new Date().toISOString() })
-      .eq("id", userId);
-  }
-
+  // ============================================
   // LAYER 15: AUDIT LOG (Fire and forget)
+  // ============================================
   logSafely(
     admin.from("audit_logs").insert({
       actor_id: userId ?? 'anonymous',
@@ -510,7 +538,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     "audit_log"
   );
 
+  // ============================================
   // LAYER 16: SUCCESS RESPONSE
+  // ============================================
   return NextResponse.json({
     success: true,
     message: "Vote recorded successfully!",
