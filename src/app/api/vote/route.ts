@@ -432,44 +432,70 @@ export async function POST(request: Request): Promise<NextResponse> {
       "suspicious_activity"
     );
   }
+  
+
+    // ============================================
+  // LAYER 12: RECORD VOTE (Using RPC for INET casting)
   // ============================================
-  // LAYER 12: RECORD VOTE
-  // ============================================
 
-  // Ensure IP is properly formatted for INET column
-  const validIp = ip.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/)
-    ? ip
-    : "0.0.0.0";
+  // Validate and format IP address for INET column
+  const isValidIp = (ip: string): boolean => {
+    const ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+    return ipv4Regex.test(ip);
+  };
 
-  const { data: newVote, error: voteError } = await admin
-    .from("votes")
-    .insert({
-      user_id: userId ?? null,
-      category_id: categoryId,
-      subcategory_id: scopeType === "subcategory" ? scopeId : null,
-      nominee_id: nomineeId,
-      ip_address: validIp,
-      user_agent: getUserAgent(request),
-      fingerprint: fingerprint.trim().slice(0, 512),
-      created_at: new Date().toISOString(),
-    })
-    .select("id")
-    .single();
+  const validIp = isValidIp(ip) ? ip : "0.0.0.0";
 
+  // Call the insert_vote RPC function (handles INET casting at database level)
+  const { data: newVoteId, error: voteError } = await admin.rpc('insert_vote', {
+    p_user_id: userId ?? null,
+    p_category_id: categoryId,
+    p_subcategory_id: scopeType === "subcategory" ? scopeId : null,
+    p_nominee_id: nomineeId,
+    p_ip_address: validIp,
+    p_user_agent: getUserAgent(request),
+    p_fingerprint: fingerprint.trim().slice(0, 512),
+  });
+
+  // Handle vote insertion errors
   if (voteError) {
+    // PostgreSQL unique violation code
     if (voteError.code === "23505") {
+      console.warn(`[VOTE_API] Duplicate vote prevented for IP ${validIp}, nominee ${nomineeId}`);
       return NextResponse.json(
         { error: "You have already voted for this nominee." },
         { status: 409 }
       );
     }
 
-    console.error("[VOTE_API] Vote insert error:", voteError);
+    // Log detailed error for debugging
+    console.error("[VOTE_API] Vote insertion failed:", {
+      code: voteError.code,
+      message: voteError.message,
+      details: voteError.details,
+      hint: voteError.hint,
+      ip: validIp,
+      userId,
+      nomineeId,
+    });
+    
     return NextResponse.json(
-      { error: "Failed to record vote. Please try again." },
+      { error: "Unable to record vote. Please refresh the page and try again." },
       { status: 500 }
     );
   }
+
+  // Verify we received a valid vote ID
+  if (!newVoteId) {
+    console.error("[VOTE_API] Vote insertion returned no ID:", { validIp, userId, nomineeId });
+    return NextResponse.json(
+      { error: "Vote recorded but unable to confirm. Please check your vote status." },
+      { status: 202 }
+    );
+  }
+
+  // Create consistent vote object for downstream use
+  const newVote = { id: newVoteId };
 
   // ============================================
   // LAYER 13: UPDATE NOMINEE STATS (ATOMIC)
@@ -480,21 +506,44 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
 
     if (statsError) {
-      console.error("[VOTE_API] Stats update error:", statsError);
-      // Fire and forget logging
+      console.error("[VOTE_API] Nominee stats update failed:", {
+        error: statsError,
+        nomineeId,
+        voteId: newVote.id,
+      });
+      
+      // Non-critical error - log but don't fail the vote
       logSafely(
         admin.from("audit_logs").insert({
           actor_id: userId ?? 'system',
           action: "vote_stats_failed",
           entity: "votes",
           entity_id: newVote.id,
-          meta: { nomineeId, error: statsError.message },
+          meta: { 
+            nomineeId, 
+            error: statsError.message,
+            timestamp: new Date().toISOString(),
+          },
         }),
         "vote_stats_failed"
       );
     }
   } catch (statsError) {
-    console.error("[VOTE_API] Stats RPC error:", statsError);
+    // Catch unexpected errors in the RPC call itself
+    console.error("[VOTE_API] Stats RPC call exception:", statsError);
+    logSafely(
+      admin.from("audit_logs").insert({
+        actor_id: userId ?? 'system',
+        action: "vote_stats_exception",
+        entity: "votes",
+        entity_id: newVote.id,
+        meta: { 
+          nomineeId, 
+          error: statsError instanceof Error ? statsError.message : 'Unknown error',
+        },
+      }),
+      "vote_stats_exception"
+    );
   }
 
   // ============================================
@@ -511,23 +560,27 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   // ============================================
-  // LAYER 15: AUDIT LOG (Fire and forget)
+  // LAYER 15: AUDIT LOG (Non-blocking, fire-and-forget)
   // ============================================
+  const auditLogData = {
+    actor_id: userId ?? 'anonymous',
+    action: "vote_cast",
+    entity: "votes",
+    entity_id: newVote.id,
+    meta: {
+      categoryId,
+      nomineeId,
+      subcategoryId: scopeType === "subcategory" ? scopeId : null,
+      ip: validIp.slice(0, 45), // Truncate for IP field limit
+      fingerprint: fingerprint.slice(0, 32), // Store partial fingerprint for audit
+      userAgent: getUserAgent(request).slice(0, 200),
+      responseTime: Date.now() - startTime,
+      timestamp: new Date().toISOString(),
+    },
+  };
+
   logSafely(
-    admin.from("audit_logs").insert({
-      actor_id: userId ?? 'anonymous',
-      action: "vote_cast",
-      entity: "votes",
-      entity_id: newVote.id,
-      meta: {
-        categoryId,
-        nomineeId,
-        subcategoryId: scopeType === "subcategory" ? scopeId : null,
-        ip: ip.slice(0, 45),
-        fingerprint: fingerprint.slice(0, 32),
-        responseTime: Date.now() - startTime,
-      },
-    }),
+    admin.from("audit_logs").insert(auditLogData),
     "audit_log"
   );
 
@@ -536,7 +589,8 @@ export async function POST(request: Request): Promise<NextResponse> {
   // ============================================
   return NextResponse.json({
     success: true,
-    message: "Vote recorded successfully!",
+    message: "Your vote has been recorded successfully!",
     voteId: newVote.id,
+    timestamp: new Date().toISOString(),
   });
 }
