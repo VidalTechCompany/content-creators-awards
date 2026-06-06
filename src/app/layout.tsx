@@ -24,12 +24,18 @@ const sans = DM_Sans({
 });
 
 // Clean up site base URL mapping
-const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://molocontentcreatorsawards.co.ke";
+const baseUrl = process.env.NEXT_PUBLIC_SITE_URL 
+  ? (process.env.NEXT_PUBLIC_SITE_URL.startsWith('http') 
+      ? process.env.NEXT_PUBLIC_SITE_URL 
+      : `https://${process.env.NEXT_PUBLIC_SITE_URL}`)
+  : "https://molocontentcreatorsawards.co.ke";
+
+const siteUrl = baseUrl.replace(/\/$/, "");
 
 // Merging default SEO structures with explicitly declared root configs
 export const metadata: Metadata = {
   ...defaultMetadata,
-  metadataBase: new URL(baseUrl),
+  metadataBase: new URL(siteUrl),
   title: {
     default: "Molo Content Creators Awards",
     template: "%s | Molo Content Creators Awards",
@@ -40,7 +46,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Molo Content Creators Awards",
     description: "Cast your vote and support your favorite digital creators!",
-    url: baseUrl,
+    url: siteUrl,
     siteName: "Molo Content Creators Awards",
     images: [
       {
