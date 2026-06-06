@@ -433,25 +433,28 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
   // ============================================
-  // LAYER 12: RECORD VOTE (Using RPC Function)
+  // LAYER 12: RECORD VOTE
   // ============================================
-  
+
   // Ensure IP is properly formatted for INET column
-  let validIp = ip;
-  if (!validIp.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/)) {
-    validIp = '0.0.0.0'; // Fallback for invalid IPs
-  }
-  
-  // Call the insert_vote RPC function (handles INET casting)
-  const { data: newVoteId, error: voteError } = await admin.rpc('insert_vote', {
-    p_user_id: userId ?? null,
-    p_category_id: categoryId,
-    p_subcategory_id: scopeType === "subcategory" ? scopeId : null,
-    p_nominee_id: nomineeId,
-    p_ip_address: validIp,
-    p_user_agent: getUserAgent(request),
-    p_fingerprint: fingerprint.trim().slice(0, 512),
-  });
+  const validIp = ip.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/)
+    ? ip
+    : "0.0.0.0";
+
+  const { data: newVote, error: voteError } = await admin
+    .from("votes")
+    .insert({
+      user_id: userId ?? null,
+      category_id: categoryId,
+      subcategory_id: scopeType === "subcategory" ? scopeId : null,
+      nominee_id: nomineeId,
+      ip_address: validIp,
+      user_agent: getUserAgent(request),
+      fingerprint: fingerprint.trim().slice(0, 512),
+      created_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single();
 
   if (voteError) {
     if (voteError.code === "23505") {
@@ -460,23 +463,13 @@ export async function POST(request: Request): Promise<NextResponse> {
         { status: 409 }
       );
     }
-    
-    // Log detailed error for debugging
-    console.error("[VOTE_API] Vote insert error:", {
-      code: voteError.code,
-      message: voteError.message,
-      ip: validIp,
-      ipType: typeof validIp,
-    });
-    
+
+    console.error("[VOTE_API] Vote insert error:", voteError);
     return NextResponse.json(
       { error: "Failed to record vote. Please try again." },
       { status: 500 }
     );
   }
-
-  // Create a vote object for consistency with the rest of the code
-  const newVote = { id: newVoteId };
 
   // ============================================
   // LAYER 13: UPDATE NOMINEE STATS (ATOMIC)
