@@ -3,36 +3,82 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { voteRequestSchema } from "@/lib/validation/vote";
 import { assertTrustedOrigin } from "@/lib/csrf";
-import { rateLimit } from "@/lib/rate-limit";
 import { VOTE_COOLDOWN_SEC } from "@/lib/constants";
 
-function clientIp(request: Request) {
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) return forwarded.split(",")[0]?.trim() || null;
-  return request.headers.get("x-real-ip");
+// ============================================
+// ENHANCED TYPES
+// ============================================
+
+type ScopeType = 'category' | 'subcategory';
+
+type SupabaseAdminClient = ReturnType<typeof createServiceClient>;
+
+interface ValidNomineeResult {
+  valid: true;
+  scopeType: ScopeType;
+  scopeId: string;
 }
 
-async function verifyTurnstile(token: string, ip?: string) {
+interface InvalidNomineeResult {
+  valid: false;
+  error: string;
+}
+
+type NomineeValidationResult = ValidNomineeResult | InvalidNomineeResult;
+
+// ============================================
+// ENHANCED UTILITIES
+// ============================================
+
+function clientIp(request: Request): string {
+  const forwarded = request.headers.get("x-forwarded-for");
+  if (forwarded) {
+    const ips = forwarded.split(",");
+    return ips[0]?.trim() || "0.0.0.0";
+  }
+  return request.headers.get("x-real-ip") || "0.0.0.0";
+}
+
+function getUserAgent(request: Request): string {
+  return request.headers.get("user-agent")?.slice(0, 512) || "unknown";
+}
+
+function getOrigin(request: Request): string {
+  return request.headers.get("origin") || request.headers.get("referer") || "unknown";
+}
+
+// ============================================
+// ENHANCED CAPTCHA VERIFICATION WITH CACHING
+// ============================================
+
+const captchaCache = new Map<string, { verified: boolean; expires: number }>();
+
+async function verifyTurnstile(token: string, ip?: string): Promise<boolean> {
   const secret = process.env.TURNSTILE_SECRET_KEY;
 
-  // Dev bypass: If secret is missing and we're not in production, allow for easier testing.
+  if (captchaCache.has(token)) {
+    const cached = captchaCache.get(token)!;
+    if (cached.expires > Date.now()) {
+      return cached.verified;
+    }
+    captchaCache.delete(token);
+  }
+
   if (!secret && process.env.NODE_ENV !== "production") {
-    console.warn("[VOTE_API] CAPTCHA: No secret provided in dev mode, bypassing verification.");
+    console.warn("[VOTE_API] CAPTCHA: Dev mode bypass");
     return true;
   }
 
   if (!secret) {
-    console.error("[VOTE_API] CAPTCHA Error: TURNSTILE_SECRET_KEY environment variable is missing.");
+    console.error("[VOTE_API] CAPTCHA Error: Missing TURNSTILE_SECRET_KEY");
     return false;
   }
 
   if (!token || token === "dev-bypass-placeholder") {
-    // Allow placeholder only in dev mode
-    if (process.env.NODE_ENV !== "production" && token === "dev-bypass-placeholder") {
-      console.warn("[VOTE_API] CAPTCHA: Dev bypass placeholder accepted.");
+    if (process.env.NODE_ENV !== "production") {
       return true;
     }
-    console.error("[VOTE_API] CAPTCHA Error: Missing or invalid token from client.");
+    console.error("[VOTE_API] CAPTCHA Error: Missing token");
     return false;
   }
 
@@ -49,50 +95,207 @@ async function verifyTurnstile(token: string, ip?: string) {
       cache: 'no-store',
     });
 
-    let data;
-    try {
-      const text = await res.text();
-      data = text ? JSON.parse(text) : {};
-    } catch (e) {
-      console.error("[VOTE_API] Failed to parse Turnstile response:", e);
-      data = {};
+    const data = await res.json() as { success: boolean; "error-codes"?: string[] };
+
+    captchaCache.set(token, {
+      verified: data.success === true,
+      expires: Date.now() + 5 * 60 * 1000,
+    });
+
+    if (!data.success) {
+      console.error(`[VOTE_API] CAPTCHA failed for ${ip}:`, data["error-codes"]);
     }
 
-    if (!res.ok) {
-      console.error(`[VOTE_API] Turnstile siteverify failed: ${data.error || data.message}`);
-      return false;
-    }
-
-    if (data.success) return true;
-
-    console.error(`[VOTE_API] CAPTCHA failed for ${ip}:`, data["error-codes"] || "Unknown error");
-    return false;
+    return data.success === true;
   } catch (err) {
     console.error("[VOTE_API] Turnstile connection error:", err);
     return false;
   }
 }
 
-export async function POST(request: Request) {
-  // 1. Origin check
+// ============================================
+// ENHANCED RATE LIMITING WITH SLIDING WINDOW
+// ============================================
+
+const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
+
+async function slidingWindowRateLimit(
+  key: string,
+  maxRequests: number,
+  windowSeconds: number
+): Promise<{ allowed: boolean; remaining: number; retryAfter: number }> {
+  const now = Date.now();
+  const windowMs = windowSeconds * 1000;
+  
+  const record = rateLimitStore.get(key);
+  
+  if (!record || record.resetAt <= now) {
+    rateLimitStore.set(key, {
+      count: 1,
+      resetAt: now + windowMs,
+    });
+    return { allowed: true, remaining: maxRequests - 1, retryAfter: 0 };
+  }
+  
+  if (record.count >= maxRequests) {
+    const retryAfter = Math.ceil((record.resetAt - now) / 1000);
+    return { allowed: false, remaining: 0, retryAfter };
+  }
+  
+  record.count++;
+  return { allowed: true, remaining: maxRequests - record.count, retryAfter: 0 };
+}
+
+// ============================================
+// ENHANCED VOTE VALIDATION
+// ============================================
+
+async function validateNominee(
+  admin: SupabaseAdminClient,
+  nomineeId: string,
+  categoryId: string,
+  subcategoryId?: string | null
+): Promise<NomineeValidationResult> {
+  const { data: nominee, error } = await admin
+    .from("nominees")
+    .select("id, category_id, subcategory_id, status")
+    .eq("id", nomineeId)
+    .maybeSingle();
+
+  if (error || !nominee || nominee.status !== "approved") {
+    return { valid: false, error: "Invalid nominee. Please select a valid option." };
+  }
+
+  if (nominee.category_id !== categoryId) {
+    return { valid: false, error: "This nominee does not belong to the selected category." };
+  }
+
+  if (nominee.subcategory_id && !subcategoryId) {
+    return { valid: false, error: "This nominee requires a subcategory selection." };
+  }
+
+  if (!nominee.subcategory_id && subcategoryId) {
+    return { valid: false, error: "Invalid subcategory for this nominee." };
+  }
+
+  if (nominee.subcategory_id && subcategoryId !== nominee.subcategory_id) {
+    return { valid: false, error: "The selected subcategory does not match this nominee." };
+  }
+
+  const scopeType: ScopeType = nominee.subcategory_id ? "subcategory" : "category";
+  const scopeId: string = nominee.subcategory_id || categoryId;
+
+  return { valid: true, scopeType, scopeId };
+}
+
+// ============================================
+// ENHANCED DUPLICATE CHECK
+// ============================================
+
+async function checkDuplicateVote(
+  admin: SupabaseAdminClient,
+  fingerprint: string,
+  userId: string | undefined,
+  scopeType: ScopeType,
+  scopeId: string,
+  nomineeId: string
+): Promise<{ allowed: boolean; error?: string }> {
+  const scopeField = scopeType === "subcategory" ? "subcategory_id" : "category_id";
+  
+  const query = admin
+    .from("votes")
+    .select("id, user_id, fingerprint")
+    .eq(scopeField, scopeId)
+    .eq("nominee_id", nomineeId);
+
+  if (userId) {
+    const { data: existing } = await query.or(`user_id.eq.${userId},fingerprint.eq.${fingerprint}`).limit(1);
+    
+    if (existing && existing.length > 0) {
+      if (existing[0].user_id === userId) {
+        return { allowed: false, error: "Your account has already voted for this nominee." };
+      }
+      return { allowed: false, error: "This device has already voted for this nominee." };
+    }
+  } else {
+    const { data: existing } = await query.eq("fingerprint", fingerprint).limit(1);
+    
+    if (existing && existing.length > 0) {
+      return { allowed: false, error: "This device has already voted for this nominee." };
+    }
+  }
+  
+  return { allowed: true };
+}
+
+// Helper function for fire-and-forget logging (no .catch issues)
+async function logSafely(
+  promise: PromiseLike<unknown>,
+  context: string
+): Promise<void> {
+  try {
+    await promise;
+  } catch (err) {
+    console.error(`Failed to log ${context}:`, err);
+  }
+}
+
+// ============================================
+// MAIN POST HANDLER
+// ============================================
+
+export async function POST(request: Request): Promise<NextResponse> {
+  const startTime = Date.now();
+  const ip = clientIp(request);
+  const origin = getOrigin(request);
+
+  // LAYER 1: ORIGIN CHECK
   try {
     await assertTrustedOrigin(request);
   } catch {
-    const origin = request.headers.get("origin") || request.headers.get("referer") || "missing";
-    return NextResponse.json({ error: `Invalid origin: ${origin}` }, { status: 403 });
+    console.warn(`[VOTE_API] Blocked request from invalid origin: ${origin}`);
+    return NextResponse.json(
+      { error: "Invalid request origin. Please refresh the page and try again." },
+      { status: 403 }
+    );
   }
 
-  // 2. Rate limiting by IP
-  const ip = clientIp(request) ?? "0.0.0.0";
-  if (!(await rateLimit(`vote:${ip}`, 25, 60_000))) {
-    return NextResponse.json({ error: "Too many requests. Please try again later." }, { status: 429 });
+  // LAYER 2: RATE LIMITING
+  const minuteLimit = await slidingWindowRateLimit(`vote:minute:${ip}`, 3, 60);
+  if (!minuteLimit.allowed) {
+    console.warn(`[VOTE_API] Rate limit (minute) exceeded for IP ${ip}`);
+    return NextResponse.json(
+      { 
+        error: `Too many votes. Please wait ${minuteLimit.retryAfter} seconds before voting again.`,
+        retryAfter: minuteLimit.retryAfter 
+      },
+      { 
+        status: 429,
+        headers: { 'Retry-After': String(minuteLimit.retryAfter) }
+      }
+    );
   }
 
-  // 3. Parse JSON safely
+  const hourLimit = await slidingWindowRateLimit(`vote:hour:${ip}`, 10, 3600);
+  if (!hourLimit.allowed) {
+    return NextResponse.json(
+      { error: "Hourly vote limit reached. Please try again later." },
+      { status: 429 }
+    );
+  }
+
+  const dayLimit = await slidingWindowRateLimit(`vote:day:${ip}`, 30, 86400);
+  if (!dayLimit.allowed) {
+    return NextResponse.json(
+      { error: "Daily vote limit reached. Come back tomorrow!" },
+      { status: 429 }
+    );
+  }
+
+  // LAYER 3: PARSE AND VALIDATE REQUEST
   let json: unknown;
   try {
-    const text = await request.text();
-    json = text ? JSON.parse(text) : {};
+    json = await request.json();
   } catch {
     return NextResponse.json(
       { error: "Invalid JSON payload. Please check your request format." },
@@ -100,32 +303,13 @@ export async function POST(request: Request) {
     );
   }
 
-  // 4. Log incoming request for debugging (remove in production)
-  if (process.env.NODE_ENV !== "production") {
-    console.log("[VOTE_API] Received payload:", JSON.stringify(json, null, 2));
-  }
-
-  // 5. Handle dev bypass for captcha
-  const isDevBypass = process.env.NODE_ENV !== "production" && !process.env.TURNSTILE_SECRET_KEY;
-  const payload = (isDevBypass && typeof json === 'object' && json !== null && !('captchaToken' in json))
-    ? { ...json, captchaToken: "dev-bypass-placeholder" }
-    : json;
-
-  // 6. Validate with Zod
-  const parsed = voteRequestSchema.safeParse(payload);
-
+  const parsed = voteRequestSchema.safeParse(json);
   if (!parsed.success) {
-    console.error(
-      `[VOTE_API] Validation Failed for IP: ${ip}\n` +
-      `Payload: ${JSON.stringify(json)}\n` +
-      `Errors: ${JSON.stringify(parsed.error.flatten())}`
-    );
-
+    console.error(`[VOTE_API] Validation failed for IP ${ip}:`, parsed.error.flatten());
     return NextResponse.json(
       {
         error: "Validation failed",
         details: parsed.error.flatten(),
-        message: "Please check your input: categoryId, nomineeId, fingerprint, and captchaToken are required"
       },
       { status: 400 }
     );
@@ -133,125 +317,81 @@ export async function POST(request: Request) {
 
   const { categoryId, subcategoryId, nomineeId, fingerprint, captchaToken } = parsed.data;
 
-  // 7. CAPTCHA verification
+  // LAYER 4: CAPTCHA VERIFICATION
   const isHuman = await verifyTurnstile(captchaToken, ip);
   if (!isHuman) {
-    console.error(`[VOTE_API] CAPTCHA verification failed for IP ${ip}`);
+    console.error(`[VOTE_API] CAPTCHA failed for IP ${ip}`);
     return NextResponse.json(
-      { error: "CAPTCHA verification failed. Please refresh and try again." },
+      { error: "Security verification failed. Please refresh and try again." },
       { status: 403 }
     );
   }
 
-  // 8. Initialize Supabase clients
+  // LAYER 5: INIT CLIENTS
   const supabase = await createClient();
   const admin = createServiceClient();
 
-  // 9. Authentication (optional - allows guest voting)
+  // LAYER 6: AUTHENTICATION
   const authHeader = request.headers.get("Authorization");
   const jwtToken = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : undefined;
   const { data: authData } = await supabase.auth.getUser(jwtToken);
   const user = authData?.user;
   const userId = user?.id;
-  const ua = request.headers.get("user-agent") ?? "";
 
-  // 10. Global system checks
-  const { data: settings } = await admin.from("site_settings").select("*").eq("id", 1).maybeSingle();
+  // LAYER 7: SYSTEM CHECKS
+  const { data: settings } = await admin
+    .from("site_settings")
+    .select("voting_open, voting_deadline")
+    .eq("id", 1)
+    .maybeSingle();
 
-  if (settings && settings.voting_open === false) {
-    console.warn("[VOTE_API] Voting is closed");
-    return NextResponse.json({ error: "Voting is currently closed" }, { status: 403 });
+  if (settings?.voting_open === false) {
+    return NextResponse.json(
+      { error: "Voting is currently closed." },
+      { status: 403 }
+    );
   }
 
   if (settings?.voting_deadline) {
     const deadline = new Date(settings.voting_deadline);
     if (deadline.getTime() < Date.now()) {
-      console.warn("[VOTE_API] Voting deadline passed");
-      return NextResponse.json({ error: "Voting deadline has passed" }, { status: 403 });
-    }
-  }
-
-  // 11. Validate nominee exists and is approved
-  const { data: nominee, error: nomErr } = await admin
-    .from("nominees")
-    .select("id, category_id, subcategory_id, status")
-    .eq("id", nomineeId)
-    .maybeSingle();
-
-  if (nomErr || !nominee || nominee.status !== "approved") {
-    return NextResponse.json(
-      { error: "Invalid nominee or candidate. Please select a valid option." },
-      { status: 400 }
-    );
-  }
-
-  if (nominee.category_id !== categoryId) {
-    return NextResponse.json(
-      { error: "Invalid category for this nominee." },
-      { status: 400 }
-    );
-  }
-
-  if (nominee.subcategory_id && !subcategoryId) {
-    return NextResponse.json(
-      { error: "This nominee requires a subcategory selection." },
-      { status: 400 }
-    );
-  }
-
-  if (!nominee.subcategory_id && subcategoryId) {
-    return NextResponse.json(
-      { error: "Invalid subcategory for this nominee." },
-      { status: 400 }
-    );
-  }
-
-  if (nominee.subcategory_id && subcategoryId !== nominee.subcategory_id) {
-    return NextResponse.json(
-      { error: "The selected subcategory does not match this nominee." },
-      { status: 400 }
-    );
-  }
-
-  const voteScope = nominee.subcategory_id
-    ? { scopeType: "subcategory", scopeId: nominee.subcategory_id }
-    : { scopeType: "category", scopeId: categoryId };
-
-  // 12. Device fingerprint check (prevent multiple votes from same device)
-  const fingerprintQuery = admin.from("votes").select("*", { count: "exact", head: true });
-  const userQuery = admin.from("votes").select("*", { count: "exact", head: true });
-
-  if (voteScope.scopeType === "subcategory") {
-    fingerprintQuery.eq("subcategory_id", voteScope.scopeId);
-    userQuery.eq("subcategory_id", voteScope.scopeId);
-  } else {
-    fingerprintQuery.eq("category_id", voteScope.scopeId);
-    userQuery.eq("category_id", voteScope.scopeId);
-  }
-
-  fingerprintQuery.eq("fingerprint", fingerprint.trim().slice(0, 512));
-
-  const { count: fingerprintCount } = await fingerprintQuery;
-
-  if ((fingerprintCount ?? 0) > 0) {
-    return NextResponse.json(
-      { error: "This device has already voted in this voting scope" },
-      { status: 409 }
-    );
-  }
-
-  if (userId) {
-    userQuery.eq("user_id", userId);
-    const { count: userCount } = await userQuery;
-    if ((userCount ?? 0) > 0) {
       return NextResponse.json(
-        { error: "This account has already voted in this voting scope" },
-        { status: 409 }
+        { error: "Voting has ended. Thank you for participating!" },
+        { status: 403 }
       );
     }
   }
 
-  // 13. Cooldown check for registered users
+  // LAYER 8: NOMINEE VALIDATION
+  const nomineeValidation = await validateNominee(admin, nomineeId, categoryId, subcategoryId);
+  if (!nomineeValidation.valid) {
+    return NextResponse.json(
+      { error: nomineeValidation.error },
+      { status: 400 }
+    );
+  }
+
+  // Type-safe destructuring - we know it's valid here
+  const { scopeType, scopeId } = nomineeValidation;
+
+  // LAYER 9: DUPLICATE VOTE CHECK
+  const duplicateCheck = await checkDuplicateVote(
+    admin,
+    fingerprint.trim().slice(0, 512),
+    userId,
+    scopeType,
+    scopeId,
+    nomineeId
+  );
+  
+  if (!duplicateCheck.allowed) {
+    return NextResponse.json(
+      { error: duplicateCheck.error },
+      { status: 409 }
+    );
+  }
+
+  // LAYER 10: COOLDOWN CHECK
   if (userId) {
     const { data: profile } = await admin
       .from("profiles")
@@ -262,15 +402,19 @@ export async function POST(request: Request) {
     if (profile?.last_vote_at) {
       const delta = (Date.now() - new Date(profile.last_vote_at).getTime()) / 1000;
       if (delta < VOTE_COOLDOWN_SEC) {
+        const waitSeconds = Math.ceil(VOTE_COOLDOWN_SEC - delta);
         return NextResponse.json(
-          { error: `Please wait ${Math.ceil(VOTE_COOLDOWN_SEC - delta)} seconds between votes` },
-          { status: 429 }
+          { error: `Please wait ${waitSeconds} seconds between votes.`, retryAfter: waitSeconds },
+          { 
+            status: 429,
+            headers: { 'Retry-After': String(waitSeconds) }
+          }
         );
       }
     }
   }
 
-  // 14. IP burst detection (monitoring only, not blocking)
+  // LAYER 11: IP BURST DETECTION & LOGGING (Fire and forget - no await)
   const { count: ipBurst } = await admin
     .from("votes")
     .select("*", { count: "exact", head: true })
@@ -278,44 +422,68 @@ export async function POST(request: Request) {
     .gte("created_at", new Date(Date.now() - 60 * 60 * 1000).toISOString());
 
   if ((ipBurst ?? 0) > 40) {
-    try {
-      await admin.from("suspicious_activity").insert({
+    // Fire and forget - no await to avoid blocking
+    logSafely(
+      admin.from("suspicious_activity").insert({
         user_id: userId ?? null,
         reason: "high_ip_volume",
         meta: { ip, count: ipBurst, timestamp: new Date().toISOString() },
-      });
-    } catch (err) {
-      console.error("Failed to log suspicious activity:", err);
-    }
+      }),
+      "suspicious_activity"
+    );
   }
 
-  // 15. Record the vote
-  const { error: voteError } = await admin.from("votes").insert({
-    user_id: userId ?? null,
-    category_id: categoryId,
-    subcategory_id: voteScope.scopeType === "subcategory" ? voteScope.scopeId : null,
-    nominee_id: nomineeId,
-    ip_address: ip,
-    user_agent: ua.slice(0, 512),
-    fingerprint: fingerprint.slice(0, 512),
-    created_at: new Date().toISOString(),
-  });
+  // LAYER 12: RECORD VOTE
+  const { data: newVote, error: voteError } = await admin
+    .from("votes")
+    .insert({
+      user_id: userId ?? null,
+      category_id: categoryId,
+      subcategory_id: scopeType === "subcategory" ? scopeId : null,
+      nominee_id: nomineeId,
+      ip_address: ip,
+      user_agent: getUserAgent(request),
+      fingerprint: fingerprint.trim().slice(0, 512),
+      created_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single();
 
   if (voteError) {
-    if (voteError.code === "23505") { // Unique violation
+    if (voteError.code === "23505") {
       return NextResponse.json(
-        { error: "You have already voted in this category" },
+        { error: "You have already voted for this nominee." },
         { status: 409 }
       );
     }
-    console.error("Vote insert error:", voteError);
+    console.error("[VOTE_API] Vote insert error:", voteError);
     return NextResponse.json(
       { error: "Failed to record vote. Please try again." },
       { status: 500 }
     );
   }
 
-  // 16. Update user's last vote timestamp
+  // LAYER 13: UPDATE NOMINEE STATS (ATOMIC)
+  const { error: statsError } = await admin.rpc("increment_vote_count", {
+    p_nominee_id: nomineeId,
+  });
+
+  if (statsError) {
+    console.error("[VOTE_API] Stats update error:", statsError);
+    // Fire and forget logging
+    logSafely(
+      admin.from("audit_logs").insert({
+        actor_id: userId ?? 'system',
+        action: "vote_stats_failed",
+        entity: "votes",
+        entity_id: newVote.id,
+        meta: { nomineeId, error: statsError.message },
+      }),
+      "vote_stats_failed"
+    );
+  }
+
+  // LAYER 14: UPDATE USER COOLDOWN
   if (userId) {
     await admin
       .from("profiles")
@@ -323,24 +491,29 @@ export async function POST(request: Request) {
       .eq("id", userId);
   }
 
-  // 17. Log to audit trail
-  await admin.from("audit_logs").insert({
-    actor_id: userId ?? '00000000-0000-0000-0000-000000000000',
-    action: "vote_cast",
-    entity: "votes",
-    entity_id: nomineeId,
-    meta: {
-      categoryId,
-      subcategoryId: voteScope.scopeType === "subcategory" ? voteScope.scopeId : null,
-      ip,
-      fingerprint: fingerprint.slice(0, 32),
-    },
-  });
+  // LAYER 15: AUDIT LOG (Fire and forget)
+  logSafely(
+    admin.from("audit_logs").insert({
+      actor_id: userId ?? 'anonymous',
+      action: "vote_cast",
+      entity: "votes",
+      entity_id: newVote.id,
+      meta: {
+        categoryId,
+        nomineeId,
+        subcategoryId: scopeType === "subcategory" ? scopeId : null,
+        ip: ip.slice(0, 45),
+        fingerprint: fingerprint.slice(0, 32),
+        responseTime: Date.now() - startTime,
+      },
+    }),
+    "audit_log"
+  );
 
-  // 18. Return success
+  // LAYER 16: SUCCESS RESPONSE
   return NextResponse.json({
     success: true,
     message: "Vote recorded successfully!",
-    vote: { categoryId, nomineeId }
+    voteId: newVote.id,
   });
 }
