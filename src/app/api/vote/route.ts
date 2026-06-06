@@ -188,45 +188,6 @@ async function validateNominee(
   return { valid: true, scopeType, scopeId };
 }
 
-// ============================================
-// ENHANCED DUPLICATE CHECK
-// ============================================
-
-async function checkDuplicateVote(
-  admin: SupabaseAdminClient,
-  fingerprint: string,
-  userId: string | undefined,
-  scopeType: ScopeType,
-  scopeId: string,
-  nomineeId: string
-): Promise<{ allowed: boolean; error?: string }> {
-  const scopeField = scopeType === "subcategory" ? "subcategory_id" : "category_id";
-  
-  const query = admin
-    .from("votes")
-    .select("id, user_id, fingerprint")
-    .eq(scopeField, scopeId)
-    .eq("nominee_id", nomineeId);
-
-  if (userId) {
-    const { data: existing } = await query.or(`user_id.eq.${userId},fingerprint.eq.${fingerprint}`).limit(1);
-    
-    if (existing && existing.length > 0) {
-      if (existing[0].user_id === userId) {
-        return { allowed: false, error: "Your account has already voted for this nominee." };
-      }
-      return { allowed: false, error: "This device has already voted for this nominee." };
-    }
-  } else {
-    const { data: existing } = await query.eq("fingerprint", fingerprint).limit(1);
-    
-    if (existing && existing.length > 0) {
-      return { allowed: false, error: "This device has already voted for this nominee." };
-    }
-  }
-  
-  return { allowed: true };
-}
 
 // Helper function for fire-and-forget logging (no .catch issues)
 async function logSafely(
@@ -374,23 +335,28 @@ export async function POST(request: Request): Promise<NextResponse> {
   // Type-safe destructuring - we know it's valid here
   const { scopeType, scopeId } = nomineeValidation;
 
-  // LAYER 9: DUPLICATE VOTE CHECK
-  const duplicateCheck = await checkDuplicateVote(
-    admin,
-    fingerprint.trim().slice(0, 512),
-    userId,
-    scopeType,
-    scopeId,
-    nomineeId
-  );
-  
-  if (!duplicateCheck.allowed) {
+    // ============================================
+  // LAYER 9: DUPLICATE VOTE CHECK (Using RPC - NO DIRECT QUERIES)
+  // ============================================
+  const { data: checkResult, error: checkError } = await admin.rpc('check_existing_vote', {
+    p_fingerprint: fingerprint.trim().slice(0, 512),
+    p_user_id: userId ?? null,
+    p_scope_type: scopeType,
+    p_scope_id: scopeId,
+    p_nominee_id: nomineeId
+  });
+
+  if (checkError) {
+    console.error("[VOTE_API] Duplicate check RPC error:", checkError);
+    // On error, allow the vote but log it (fail open for availability)
+  }
+
+  if (checkResult && checkResult.vote_exists === true) {
     return NextResponse.json(
-      { error: duplicateCheck.error },
+      { error: checkResult.reason || "You have already voted for this nominee." },
       { status: 409 }
     );
   }
-
     // ============================================
   // LAYER 10: COOLDOWN CHECK (AUTHENTICATED USERS)
   // ============================================
