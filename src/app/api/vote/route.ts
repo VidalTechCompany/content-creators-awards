@@ -399,8 +399,10 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   // Validate IP format for subsequent operations
   const isValidIp = (ipAddr: string): boolean => {
+    // Support both IPv4 and IPv6 validation
     const ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
-    return ipv4Regex.test(ipAddr);
+    const ipv6Regex = /^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$/;
+    return ipv4Regex.test(ipAddr) || ipv6Regex.test(ipAddr);
   };
 
   const validIp = isValidIp(ip) ? ip : "0.0.0.0";
@@ -437,34 +439,63 @@ export async function POST(request: Request): Promise<NextResponse> {
     console.error("[VOTE_API] IP burst detection exception:", burstError);
     // Don't block the vote on burst detection error
   }
-
   // ============================================
   // LAYER 12: RECORD VOTE (Using RPC Function)
   // ============================================
+  
+  // Validate required fields before database call
+  if (!nomineeId || !categoryId) {
+    console.error("[VOTE_API] Missing required fields:", { nomineeId, categoryId });
+    return NextResponse.json(
+      { error: "Missing required fields. Please refresh and try again." },
+      { status: 400 }
+    );
+  }
+
+  // Ensure validIp is never undefined
+  const safeIp = validIp || "0.0.0.0";
+  const safeFingerprint = fingerprint?.trim().slice(0, 512) || "unknown";
+  const safeUserAgent = getUserAgent(request).slice(0, 512) || "unknown";
+
   const { data: newVoteId, error: voteError } = await admin.rpc('insert_vote', {
     p_user_id: userId ?? null,
     p_category_id: categoryId,
     p_subcategory_id: scopeType === "subcategory" ? scopeId : null,
     p_nominee_id: nomineeId,
-    p_ip_address: validIp,
-    p_user_agent: getUserAgent(request),
-    p_fingerprint: fingerprint.trim().slice(0, 512),
+    p_ip_address: safeIp,
+    p_user_agent: safeUserAgent,
+    p_fingerprint: safeFingerprint,
   });
 
+  // Handle vote insertion errors
   if (voteError) {
+    // PostgreSQL unique violation - duplicate vote
     if (voteError.code === "23505") {
+      console.warn(`[VOTE_API] Duplicate vote prevented: User ${userId || 'anonymous'} tried to vote for nominee ${nomineeId}`);
       return NextResponse.json(
         { error: "You have already voted for this nominee." },
         { status: 409 }
       );
     }
+    
+    // PostgreSQL foreign key violation - invalid nominee/category
+    if (voteError.code === "23503") {
+      console.error(`[VOTE_API] Foreign key violation: ${voteError.message}`);
+      return NextResponse.json(
+        { error: "Invalid nominee or category. Please refresh and try again." },
+        { status: 400 }
+      );
+    }
 
+    // Log detailed error for debugging (without exposing to client)
     console.error("[VOTE_API] Vote insertion failed:", {
       code: voteError.code,
       message: voteError.message,
-      ip: validIp,
+      details: voteError.details,
+      ip: safeIp,
       userId,
       nomineeId,
+      categoryId,
     });
     
     return NextResponse.json(
@@ -473,68 +504,35 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  // Validate vote ID was returned
   if (!newVoteId) {
-    console.error("[VOTE_API] Vote insertion returned no ID");
+    console.error("[VOTE_API] Vote insertion returned no ID:", {
+      ip: safeIp,
+      userId,
+      nomineeId,
+    });
     return NextResponse.json(
       { error: "Vote recorded but unable to confirm. Please check your vote status." },
       { status: 202 }
     );
   }
 
+  // Create vote object for consistency
   const newVote = { id: newVoteId };
-  // ============================================
-  // LAYER 13: UPDATE NOMINEE STATS (ATOMIC)
-  // ============================================
-  try {
-    const { error: statsError } = await admin.rpc("increment_vote_count", {
-      p_nominee_id: nomineeId,
-    });
 
-    if (statsError) {
-      console.error("[VOTE_API] Nominee stats update failed:", {
-        error: statsError,
-        nomineeId,
-        voteId: newVote.id,
-      });
-      
-      // Non-critical error - log but don't fail the vote
-      logSafely(
-        admin.from("audit_logs").insert({
-          actor_id: userId ?? 'system',
-          action: "vote_stats_failed",
-          entity: "votes",
-          entity_id: newVote.id,
-          meta: { 
-            nomineeId, 
-            error: statsError.message,
-            timestamp: new Date().toISOString(),
-          },
-        }),
-        "vote_stats_failed"
-      );
-    }
-  } catch (statsError) {
-    // Catch unexpected errors in the RPC call itself
-    console.error("[VOTE_API] Stats RPC call exception:", statsError);
-    logSafely(
-      admin.from("audit_logs").insert({
-        actor_id: userId ?? 'system',
-        action: "vote_stats_exception",
-        entity: "votes",
-        entity_id: newVote.id,
-        meta: { 
-          nomineeId, 
-          error: statsError instanceof Error ? statsError.message : 'Unknown error',
-        },
-      }),
-      "vote_stats_exception"
-    );
-  }
+  // ============================================
+  // LAYER 13: VOTE COUNT INCREMENT - HANDLED BY DATABASE TRIGGER
+  // ============================================
+  // NOTE: The trigger 'increment_nominee_stat' automatically runs AFTER INSERT
+  // on the votes table. DO NOT call increment_vote_count here.
+  // This prevents duplicate counting.
+  // ============================================
 
   // ============================================
   // LAYER 14: UPDATE USER COOLDOWN (Non-blocking)
   // ============================================
   if (userId) {
+    // Fire and forget - don't await to avoid blocking response
     logSafely(
       admin
         .from("profiles")
@@ -556,9 +554,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       categoryId,
       nomineeId,
       subcategoryId: scopeType === "subcategory" ? scopeId : null,
-      ip: validIp.slice(0, 45), // Truncate for IP field limit
-      fingerprint: fingerprint.slice(0, 32), // Store partial fingerprint for audit
-      userAgent: getUserAgent(request).slice(0, 200),
+      ip: safeIp.slice(0, 45),
+      fingerprint: safeFingerprint.slice(0, 32),
+      userAgent: safeUserAgent.slice(0, 200),
       responseTime: Date.now() - startTime,
       timestamp: new Date().toISOString(),
     },
