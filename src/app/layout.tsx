@@ -50,7 +50,7 @@ export const metadata: Metadata = {
     siteName: "Molo Content Creators Awards",
     images: [
       {
-        url: "/og-image.png", // Ensure you have a nice preview image placed in your public/ folder
+        url: "/og-image.png",
         width: 1200,
         height: 630,
         alt: "Molo Content Creators Awards Banner",
@@ -65,6 +65,27 @@ export const metadata: Metadata = {
     description: "Cast your vote and support your favorite digital creators!",
     images: ["/og-image.png"],
   },
+  // ============================================
+  // FAVICON CONFIGURATION - Add this section
+  // ============================================
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
+      { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
+      { url: "/icon-192x192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512x512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [
+      { url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
+    ],
+    other: [
+      {
+        rel: "manifest",
+        url: "/site.webmanifest",
+      },
+    ],
+  },
 };
 
 export default async function RootLayout({
@@ -74,7 +95,7 @@ export default async function RootLayout({
 }>) {
   const supabase = await createClientOrNull();
 
-  // Parallelize the user and admin check. getUser authenticates the token with Supabase Auth.
+  // Parallelize the user and admin check
   const [userResult, adminResult] = await Promise.allSettled([
     supabase ? supabase.auth.getUser() : Promise.resolve({ data: { user: null }, error: null }),
     getAdminRole(),
