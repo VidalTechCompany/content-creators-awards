@@ -221,38 +221,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  // LAYER 2: RATE LIMITING
-  const minuteLimit = await slidingWindowRateLimit(`vote:minute:${ip}`, 3, 60);
-  if (!minuteLimit.allowed) {
-    console.warn(`[VOTE_API] Rate limit (minute) exceeded for IP ${ip}`);
-    return NextResponse.json(
-      { 
-        error: `Too many votes. Please wait ${minuteLimit.retryAfter} seconds before voting again.`,
-        retryAfter: minuteLimit.retryAfter 
-      },
-      { 
-        status: 429,
-        headers: { 'Retry-After': String(minuteLimit.retryAfter) }
-      }
-    );
-  }
-
-  const hourLimit = await slidingWindowRateLimit(`vote:hour:${ip}`, 10, 3600);
-  if (!hourLimit.allowed) {
-    return NextResponse.json(
-      { error: "Hourly vote limit reached. Please try again later." },
-      { status: 429 }
-    );
-  }
-
-  const dayLimit = await slidingWindowRateLimit(`vote:day:${ip}`, 30, 86400);
-  if (!dayLimit.allowed) {
-    return NextResponse.json(
-      { error: "Daily vote limit reached. Come back tomorrow!" },
-      { status: 429 }
-    );
-  }
-
   // LAYER 3: PARSE AND VALIDATE REQUEST
   let json: unknown;
   try {
