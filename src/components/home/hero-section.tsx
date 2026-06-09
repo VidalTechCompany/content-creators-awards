@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Sparkles, Award, Users, Eye, Shield } from "lucide-react";
+import { Sparkles, Award, Users, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CountdownHero } from "@/components/home/countdown-hero";
 import { APP_NAME } from "@/lib/constants";
@@ -53,12 +53,12 @@ export function HeroSection({ deadlineIso }: { deadlineIso: string | null }) {
             </p>
             <div className="mt-4 border-l-2 border-amber-500/40 pl-4 italic text-zinc-300">
               <p>
-                "A premium, secure platform celebrating creators across TikTok, YouTube, Instagram, podcasts, and beyond – 
-                with verified voters, audit trails, and live results."
+                &quot;A premium, secure platform celebrating creators across TikTok, YouTube, Instagram, podcasts, and beyond – 
+                with verified voters, audit trails, and live results.&quot;
               </p>
             </div>
             <p className="mt-3 text-sm font-medium text-amber-300">
-              That's the Molo Content Creators Awards.
+              That&apos;s the Molo Content Creators Awards.
             </p>
           </div>
         </div>
@@ -98,7 +98,7 @@ export function HeroSection({ deadlineIso }: { deadlineIso: string | null }) {
         {/* Call to Action */}
         <div className="mt-4">
           <p className="text-md text-zinc-500">
-            Let's show Kenya what we've got.
+            Let&apos;s show Kenya what we&apos;ve got.
           </p>
         </div>
 
