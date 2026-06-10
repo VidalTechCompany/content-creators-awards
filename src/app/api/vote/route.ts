@@ -189,7 +189,7 @@ async function validateNominee(
 }
 
 
-// Helper function for fire-and-forget logging (no .catch issues)
+// Helper function for fire-and-forget logging
 async function logSafely(
   promise: PromiseLike<unknown>,
   context: string
@@ -210,7 +210,9 @@ export async function POST(request: Request): Promise<NextResponse> {
   const ip = clientIp(request);
   const origin = getOrigin(request);
 
+  // ============================================
   // LAYER 1: ORIGIN CHECK
+  // ============================================
   try {
     await assertTrustedOrigin(request);
   } catch {
@@ -221,7 +223,35 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  // ============================================
+  // LAYER 2: RATE LIMITING - PER MINUTE ONLY
+  // ============================================
+  const isValidIpForRateLimit = (ipAddr: string): boolean => {
+    const ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+    return ipv4Regex.test(ipAddr);
+  };
+  
+  const rateLimitIp = isValidIpForRateLimit(ip) ? ip : "0.0.0.0";
+  
+  // Per IP: 5 votes per minute (prevents bot attacks)
+  const minuteLimit = await slidingWindowRateLimit(`vote:minute:${rateLimitIp}`, 5, 60);
+  if (!minuteLimit.allowed) {
+    console.warn(`[VOTE_API] Rate limit (minute) exceeded for IP ${ip}`);
+    return NextResponse.json(
+      { 
+        error: `Too many votes. Please wait ${minuteLimit.retryAfter} seconds before voting again.`,
+        retryAfter: minuteLimit.retryAfter 
+      },
+      { 
+        status: 429,
+        headers: { 'Retry-After': String(minuteLimit.retryAfter) }
+      }
+    );
+  }
+
+  // ============================================
   // LAYER 3: PARSE AND VALIDATE REQUEST
+  // ============================================
   let json: unknown;
   try {
     json = await request.json();
@@ -246,7 +276,9 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const { categoryId, subcategoryId, nomineeId, fingerprint, captchaToken } = parsed.data;
 
+  // ============================================
   // LAYER 4: CAPTCHA VERIFICATION
+  // ============================================
   const isHuman = await verifyTurnstile(captchaToken, ip);
   if (!isHuman) {
     console.error(`[VOTE_API] CAPTCHA failed for IP ${ip}`);
@@ -256,18 +288,24 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  // ============================================
   // LAYER 5: INIT CLIENTS
+  // ============================================
   const supabase = await createClient();
   const admin = createServiceClient();
 
+  // ============================================
   // LAYER 6: AUTHENTICATION
+  // ============================================
   const authHeader = request.headers.get("Authorization");
   const jwtToken = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : undefined;
   const { data: authData } = await supabase.auth.getUser(jwtToken);
   const user = authData?.user;
   const userId = user?.id;
 
+  // ============================================
   // LAYER 7: SYSTEM CHECKS
+  // ============================================
   const { data: settings } = await admin
     .from("site_settings")
     .select("voting_open, voting_deadline")
@@ -291,7 +329,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
   }
 
+  // ============================================
   // LAYER 8: NOMINEE VALIDATION
+  // ============================================
   const nomineeValidation = await validateNominee(admin, nomineeId, categoryId, subcategoryId);
   if (!nomineeValidation.valid) {
     return NextResponse.json(
@@ -300,23 +340,24 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  // Type-safe destructuring - we know it's valid here
   const { scopeType, scopeId } = nomineeValidation;
 
-    // ============================================
-  // LAYER 9: DUPLICATE VOTE CHECK (Using RPC - NO DIRECT QUERIES)
   // ============================================
+  // LAYER 9: DUPLICATE VOTE CHECK - FIXED
+  // ============================================
+  // Uses scopeType ('category' or 'subcategory') from nominee validation
+  // This correctly enforces: One vote per subcategory, but can vote in different subcategories
+  
   const { data: checkResult, error: checkError } = await admin.rpc('check_existing_vote', {
     p_fingerprint: fingerprint.trim().slice(0, 512),
     p_user_id: userId ?? null,
-    p_scope_type: scopeType,
-    p_scope_id: scopeId,
+    p_scope_type: scopeType,      // 'category' or 'subcategory' - NOT 'nominee'
+    p_scope_id: scopeId,           // category_id or subcategory_id
     p_nominee_id: nomineeId
   });
 
   if (checkError) {
     console.error("[VOTE_API] Duplicate check RPC error:", checkError);
-    // On error, allow the vote but log it (fail open for availability)
   }
 
   if (checkResult && checkResult.vote_exists === true) {
@@ -325,7 +366,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 409 }
     );
   }
-    // ============================================
+
+  // ============================================
   // LAYER 10: COOLDOWN CHECK (AUTHENTICATED USERS)
   // ============================================
   if (userId) {
@@ -361,25 +403,23 @@ export async function POST(request: Request): Promise<NextResponse> {
       }
     } catch (cooldownError) {
       console.error("[VOTE_API] Cooldown check error:", cooldownError);
-      // Don't block vote on cooldown check error - proceed but log
     }
   }
 
-  // Validate IP format for subsequent operations
+  // ============================================
+  // LAYER 11: IP VALIDATION
+  // ============================================
   const isValidIp = (ipAddr: string): boolean => {
-    // Support both IPv4 and IPv6 validation
     const ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
-    const ipv6Regex = /^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$/;
-    return ipv4Regex.test(ipAddr) || ipv6Regex.test(ipAddr);
+    return ipv4Regex.test(ipAddr);
   };
 
   const validIp = isValidIp(ip) ? ip : "0.0.0.0";
 
   // ============================================
-  // LAYER 11: IP BURST DETECTION (Using RPC to avoid INET casting errors)
+  // LAYER 12: IP BURST DETECTION
   // ============================================
   try {
-    // Use the count_votes_by_ip RPC function instead of direct query
     const { data: ipBurst, error: burstError } = await admin.rpc('count_votes_by_ip', {
       p_ip_address: validIp,
       p_hours_ago: 1
@@ -388,7 +428,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (burstError) {
       console.error("[VOTE_API] IP burst detection RPC error:", burstError);
     } else if ((ipBurst ?? 0) > 40) {
-      // Fire and forget - log suspicious activity without blocking
       logSafely(
         admin.from("suspicious_activity").insert({
           user_id: userId ?? null,
@@ -405,13 +444,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
   } catch (burstError) {
     console.error("[VOTE_API] IP burst detection exception:", burstError);
-    // Don't block the vote on burst detection error
   }
+
   // ============================================
-  // LAYER 12: RECORD VOTE (Using RPC Function)
+  // LAYER 13: RECORD VOTE
   // ============================================
-  
-  // Validate required fields before database call
   if (!nomineeId || !categoryId) {
     console.error("[VOTE_API] Missing required fields:", { nomineeId, categoryId });
     return NextResponse.json(
@@ -420,7 +457,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  // Ensure validIp is never undefined
   const safeIp = validIp || "0.0.0.0";
   const safeFingerprint = fingerprint?.trim().slice(0, 512) || "unknown";
   const safeUserAgent = getUserAgent(request).slice(0, 512) || "unknown";
@@ -435,9 +471,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     p_fingerprint: safeFingerprint,
   });
 
-  // Handle vote insertion errors
   if (voteError) {
-    // PostgreSQL unique violation - duplicate vote
     if (voteError.code === "23505") {
       console.warn(`[VOTE_API] Duplicate vote prevented: User ${userId || 'anonymous'} tried to vote for nominee ${nomineeId}`);
       return NextResponse.json(
@@ -446,7 +480,6 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
     
-    // PostgreSQL foreign key violation - invalid nominee/category
     if (voteError.code === "23503") {
       console.error(`[VOTE_API] Foreign key violation: ${voteError.message}`);
       return NextResponse.json(
@@ -455,7 +488,6 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    // Log detailed error for debugging (without exposing to client)
     console.error("[VOTE_API] Vote insertion failed:", {
       code: voteError.code,
       message: voteError.message,
@@ -472,7 +504,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  // Validate vote ID was returned
   if (!newVoteId) {
     console.error("[VOTE_API] Vote insertion returned no ID:", {
       ip: safeIp,
@@ -485,22 +516,16 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  // Create vote object for consistency
   const newVote = { id: newVoteId };
 
   // ============================================
-  // LAYER 13: VOTE COUNT INCREMENT - HANDLED BY DATABASE TRIGGER
-  // ============================================
-  // NOTE: The trigger 'increment_nominee_stat' automatically runs AFTER INSERT
-  // on the votes table. DO NOT call increment_vote_count here.
-  // This prevents duplicate counting.
+  // LAYER 14: VOTE COUNT INCREMENT - HANDLED BY DATABASE TRIGGER
   // ============================================
 
   // ============================================
-  // LAYER 14: UPDATE USER COOLDOWN (Non-blocking)
+  // LAYER 15: UPDATE USER COOLDOWN
   // ============================================
   if (userId) {
-    // Fire and forget - don't await to avoid blocking response
     logSafely(
       admin
         .from("profiles")
@@ -511,7 +536,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   // ============================================
-  // LAYER 15: AUDIT LOG (Non-blocking, fire-and-forget)
+  // LAYER 16: AUDIT LOG
   // ============================================
   const auditLogData = {
     actor_id: userId ?? 'anonymous',
@@ -536,7 +561,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   );
 
   // ============================================
-  // LAYER 16: SUCCESS RESPONSE
+  // LAYER 17: SUCCESS RESPONSE
   // ============================================
   return NextResponse.json({
     success: true,
